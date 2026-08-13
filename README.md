@@ -1,0 +1,104 @@
+# SonicVerse 音元
+
+> 让每一首音乐拥有正确的身份
+
+个人数字音乐库元数据管理与增强平台。
+
+更完整的设计说明见 [docs/DESIGN.md](./docs/DESIGN.md)。Docker Hub 说明见 [DOCKERHUB.md](./DOCKERHUB.md)。
+
+## 快速开始
+
+### Docker 部署（推荐）
+
+单容器：前端由后端托管，默认端口 **7526**。
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+访问：http://localhost:7526
+
+API：http://localhost:7526/api/v1  
+OpenAPI：http://localhost:7526/docs
+
+**NAS：** 镜像 `zevenz/sonic-verse:latest`。`entrypoint.sh` 默认以 uid/gid 1000 运行并校正 `/data` 属主；NAS 面板无需再填 `PUID`/`PGID`。
+
+```bash
+docker compose build
+docker push zevenz/sonic-verse:latest
+```
+
+### 开发模式
+
+**后端：**
+
+```bash
+cd backend
+python -m venv .venv
+# Windows: .\.venv\Scripts\activate
+# Linux/Mac: source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn sonicverse.main:app --reload --port 8000
+```
+
+**前端：**
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite 将 `/api` 与 `/covers` 代理到 `http://localhost:8000`。
+
+## 功能
+
+- [x] 音频扫描（MP3 / FLAC / AAC / OGG / WAV / APE）与后台任务
+- [x] ID3 / Vorbis Comment / MP4 标签读取与写回
+- [x] 网易云 / QQ 音乐元数据匹配（查询可选来源，整理两边都查）
+- [x] 中转目录整理：匹配后按「歌手名-歌曲名」入库
+- [x] Web 管理界面（曲库、元数据、设置、中英 i18n）
+
+## 技术栈
+
+**后端：** Python 3.11+ / FastAPI / SQLAlchemy 2.0（async）/ SQLite（可切 PostgreSQL）/ mutagen
+
+**前端：** Vue 3 + TypeScript / Vite / TailwindCSS / Pinia / vue-i18n
+
+## 环境变量（常用）
+
+无前缀。模板见 [.env.example](./.env.example)。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `SERVER_PORT` | `7526` | 对外端口 / 容器内监听端口 |
+| `DATABASE_TYPE` | `sqlite` | `sqlite` 或 `postgresql` |
+| `DATABASE_URL` | （空则本地 sqlite） | Postgres 示例：`postgres://user:pass@host:5432/sonic_verse?sslmode=prefer` |
+| `MUSIC_PATH` | `./music` / 容器内 `/music` | 音乐目录 |
+| `DATA_PATH` | `./data` / `/data` | 封面 / DB / library / 中转 |
+| `TRANSFER_PATH` | `./data/transfer` / `/data/transfer` | 中转（固定在 data 下，compose 不配） |
+| `LOGS_PATH` | `./logs` / `/app/logs` | 日志（容器内，不挂卷） |
+| `DEBUG` | `false` | 调试模式 |
+
+完整列表见 [docs/DESIGN.md §9](./docs/DESIGN.md#9-配置与环境变量)。
+
+## 项目结构
+
+```
+sonic-verse/
+├── Dockerfile               # 前端 + 后端单镜像
+├── docker-compose.yml
+├── docker/entrypoint.sh
+├── .env.example
+├── README.md
+├── backend/
+├── frontend/
+└── docs/
+```
+
+运行时数据目录（gitignore）：`music/`、`data/`（含 `data/transfer/`）。
+
+## 许可证
+
+MIT

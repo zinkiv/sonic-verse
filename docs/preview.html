@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SonicVerse 预览</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --radius-card: 12px;
+      --radius-control: 8px;
+      --motion-duration: .18s;
+      --motion-ease: ease-out;
+      --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    [data-theme="dark"] {
+      --color-bg: #111827;
+      --color-surface: #1f2937;
+      --color-accent: #6366f1;
+      --color-text: #f3f4f6;
+      --color-text-muted: #9ca3af;
+      --color-border: rgba(255, 255, 255, .08);
+      --color-shadow: rgba(0, 0, 0, .35);
+      --color-switch-track-off: #374151;
+    }
+
+    [data-theme="light"] {
+      --color-bg: #f9fafb;
+      --color-surface: #ffffff;
+      --color-accent: #6366f1;
+      --color-text: #111827;
+      --color-text-muted: #6b7280;
+      --color-border: rgba(0, 0, 0, .08);
+      --color-shadow: rgba(0, 0, 0, .12);
+      --color-switch-track-off: #d1d5db;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #app { height: 100%; }
+    body {
+      background: var(--color-bg);
+      color: var(--color-text);
+      font-family: var(--font-family);
+      transition: background-color var(--motion-duration) var(--motion-ease),
+                  color var(--motion-duration) var(--motion-ease);
+      line-height: 1.5;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; cursor: pointer; }
+
+    /* 顶部导航 */
+    .top-nav {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--color-border);
+      position: sticky;
+      top: 0;
+      background: var(--color-bg);
+      z-index: 10;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 15px;
+      letter-spacing: .02em;
+    }
+    .brand-mark { color: var(--color-accent); font-size: 18px; }
+
+    .main-tabs { display: flex; gap: 4px; }
+    .main-tab {
+      padding: 8px 18px;
+      border-radius: 999px;
+      color: var(--color-text-muted);
+      font-size: 14px;
+      font-weight: 500;
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .main-tab:hover { color: var(--color-text); }
+    .main-tab.active { background: var(--color-accent); color: #fff; }
+
+    .sub-tabs {
+      display: flex;
+      gap: 4px;
+      margin-left: 24px;
+      padding-left: 24px;
+      border-left: 1px solid var(--color-border);
+    }
+    .sub-tab {
+      padding: 5px 12px;
+      border-radius: 999px;
+      color: var(--color-text-muted);
+      font-size: 13px;
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .sub-tab:hover { color: var(--color-text); background: var(--color-surface); }
+    .sub-tab.active { background: var(--color-surface); color: var(--color-text); }
+
+    .nav-spacer { flex: 1; }
+    .nav-actions { display: flex; align-items: center; gap: 6px; }
+    .icon-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-control);
+      width: 34px;
+      height: 34px;
+      color: var(--color-text-muted);
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .icon-btn:hover { color: var(--color-text); border-color: var(--color-accent); }
+    .icon-btn.active { color: var(--color-accent); border-color: var(--color-accent); }
+
+    /* 搜索框 */
+    .search-container { position: relative; }
+    .search-input {
+      width: 0;
+      padding: 0;
+      border: none;
+      background: transparent;
+      font-size: 13px;
+      color: var(--color-text);
+      transition: all var(--motion-duration) var(--motion-ease);
+      outline: none;
+    }
+    .search-container.expanded .search-input {
+      width: 200px;
+      padding: 8px 12px;
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      background: var(--color-surface);
+    }
+    .search-container.expanded .icon-btn {
+      border-color: var(--color-accent);
+    }
+    .search-input::placeholder { color: var(--color-text-muted); }
+
+    /* 主内容区 */
+    .main-wrapper {
+      padding: 24px 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* 工具栏 */
+    .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .count { color: var(--color-text-muted); font-size: 13px; }
+
+    /* 专辑网格 */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 20px 16px;
+    }
+    .album-card { display: block; }
+    .album-cover {
+      aspect-ratio: 1;
+      border-radius: var(--radius-card);
+      overflow: hidden;
+      box-shadow: 0 4px 12px var(--color-shadow);
+      background: var(--color-surface);
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .album-card:hover .album-cover { box-shadow: 0 12px 28px var(--color-shadow); transform: translateY(-2px); }
+    .album-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .album-meta { margin-top: 8px; }
+    .album-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .album-artist { font-size: 12px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* 艺术家网格 */
+    .artist-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 20px 16px;
+    }
+    .artist-card { display: block; text-align: center; }
+    .artist-avatar {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      overflow: hidden;
+      margin: 0 auto 10px;
+      background: var(--color-surface);
+      box-shadow: 0 4px 12px var(--color-shadow);
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .artist-card:hover .artist-avatar { box-shadow: 0 8px 24px var(--color-shadow); transform: scale(1.05); }
+    .artist-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .artist-name { font-size: 13px; font-weight: 500; }
+    .artist-count { font-size: 11px; color: var(--color-text-muted); }
+
+    /* 曲目列表 */
+    .track-list {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-card);
+      overflow: hidden;
+    }
+    .track-header {
+      display: grid;
+      grid-template-columns: 50px 1fr 120px 80px;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--color-border);
+      font-size: 12px;
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .track-row {
+      display: grid;
+      grid-template-columns: 50px 1fr 120px 80px;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--color-border);
+      align-items: center;
+      transition: background-color var(--motion-duration) var(--motion-ease);
+      cursor: pointer;
+    }
+    .track-row:last-child { border-bottom: none; }
+    .track-row:hover { background: var(--color-bg); }
+    .track-num { color: var(--color-text-muted); font-size: 13px; text-align: center; }
+    .track-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .track-thumb { width: 36px; height: 36px; border-radius: 6px; overflow: hidden; background: var(--color-surface); flex-shrink: 0; }
+    .track-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .track-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .track-artist { font-size: 12px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .track-album { font-size: 12px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .track-duration { font-size: 12px; color: var(--color-text-muted); text-align: right; }
+
+    /* 元数据页面布局 */
+    .meta-layout { display: grid; grid-template-columns: 280px 1fr; gap: 24px; }
+    .meta-sidebar {}
+    .meta-main {}
+
+    /* 侧边栏卡片 */
+    .sidebar-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-card);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .sidebar-card h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--color-text-muted);
+      margin-bottom: 14px;
+    }
+
+    /* 问题列表 */
+    .issue-list { display: flex; flex-direction: column; gap: 6px; }
+    .issue-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      background: var(--color-bg);
+      border-radius: var(--radius-control);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color var(--motion-duration) var(--motion-ease);
+    }
+    .issue-row:hover { background: var(--color-border); }
+    .issue-label { color: var(--color-text-muted); display: flex; align-items: center; gap: 6px; }
+    .issue-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .issue-dot.yellow { background: #fbbf24; }
+    .issue-dot.red { background: #ef4444; }
+    .issue-dot.blue { background: #3b82f6; }
+    .issue-count { font-weight: 500; }
+
+    /* 快捷操作 */
+    .quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .quick-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 14px 8px;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-control);
+      color: var(--color-text-muted);
+      font-size: 11px;
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .quick-btn:hover { background: var(--color-border); color: var(--color-text); border-color: var(--color-accent); }
+    .quick-btn svg { width: 18px; height: 18px; }
+
+    /* 队列列表 */
+    .queue-list {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-card);
+      overflow: hidden;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .queue-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--color-border);
+      cursor: pointer;
+      transition: background-color var(--motion-duration) var(--motion-ease);
+    }
+    .queue-item:last-child { border-bottom: none; }
+    .queue-item:hover, .queue-item.active { background: var(--color-bg); }
+    .queue-thumb { width: 32px; height: 32px; border-radius: 4px; background: var(--color-surface); overflow: hidden; flex-shrink: 0; }
+    .queue-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .queue-info { flex: 1; min-width: 0; }
+    .queue-title { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .queue-sub { font-size: 11px; color: var(--color-text-muted); }
+
+    /* 大按钮 */
+    .action-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px;
+      background: var(--color-accent);
+      border: none;
+      border-radius: var(--radius-control);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      margin-top: 12px;
+      transition: opacity var(--motion-duration) var(--motion-ease);
+    }
+    .action-btn:hover { opacity: 0.9; }
+    .action-btn svg { width: 16px; height: 16px; }
+
+    /* 工作区 */
+    .workspace {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-card);
+      padding: 20px;
+    }
+    .workspace h4 { font-size: 13px; color: var(--color-text-muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: .04em; }
+    .current-item { display: flex; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+    .current-cover { width: 80px; height: 80px; border-radius: var(--radius-control); background: var(--color-bg); overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+    .current-cover img { width: 100%; height: 100%; object-fit: cover; }
+    .current-info h5 { font-size: 15px; margin-bottom: 4px; }
+    .current-info p { font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px; }
+    .apply-btn { background: var(--color-accent); color: #fff; border: none; border-radius: var(--radius-control); padding: 6px 12px; font-size: 12px; }
+    .candidates { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .candidate-card {
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-control);
+      padding: 12px;
+      cursor: pointer;
+      transition: all var(--motion-duration) var(--motion-ease);
+    }
+    .candidate-card:hover { border-color: var(--color-accent); }
+    .candidate-card.selected { border-color: var(--color-accent); background: rgba(99, 102, 241, 0.1); }
+    .candidate-card h6 { font-size: 13px; margin-bottom: 4px; }
+    .candidate-card p { font-size: 11px; color: var(--color-text-muted); }
+    .candidate-score { display: inline-block; margin-top: 6px; padding: 2px 8px; background: var(--color-accent); color: #fff; border-radius: 999px; font-size: 11px; }
+
+    /* 设置页面 */
+    .settings-page {
+      padding: 28px 32px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .settings-page h1 { font-size: 22px; margin-bottom: 28px; }
+    .settings-section {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-card);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .settings-section h2 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--color-text-muted);
+      margin-bottom: 16px;
+    }
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-row label { font-size: 14px; }
+    .settings-row .value { font-size: 13px; color: var(--color-text-muted); font-family: ui-monospace, monospace; }
+    .settings-row input[type="text"] {
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-control);
+      padding: 8px 12px;
+      font-size: 13px;
+      color: var(--color-text);
+      font-family: ui-monospace, monospace;
+      width: 100%;
+      max-width: 300px;
+    }
+    .settings-row input[type="text"]:focus { outline: none; border-color: var(--color-accent); }
+
+    .switch {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      border: none;
+      border-radius: 999px;
+      background: var(--color-switch-track-off);
+      cursor: pointer;
+      transition: background-color var(--motion-duration) var(--motion-ease);
+    }
+    .switch.on { background: var(--color-accent); }
+    .switch .knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform var(--motion-duration) var(--motion-ease);
+    }
+    .switch.on .knob { transform: translate(18px); }
+    .segmented { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-control); overflow: hidden; }
+    .segmented button {
+      background: var(--color-bg);
+      border: none;
+      color: var(--color-text-muted);
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .segmented button + button { border-left: 1px solid var(--color-border); }
+    .segmented button.active { background: var(--color-accent); color: #fff; }
+
+    .page { display: block; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="app">
+
+    <!-- 顶部导航 -->
+    <nav class="top-nav">
+      <a href="#" class="brand">
+        <span class="brand-mark">♪</span>
+        <span>SonicVerse</span>
+      </a>
+
+      <div class="main-tabs">
+        <a href="#" class="main-tab active" data-page="library">音乐库</a>
+        <a href="#" class="main-tab" data-page="metadata">元数据</a>
+        <a href="#" class="main-tab" data-page="settings">设置</a>
+      </div>
+
+      <div class="sub-tabs" id="subTabs">
+        <a href="#" class="sub-tab active" data-sub="albums">专辑</a>
+        <a href="#" class="sub-tab" data-sub="artists">艺术家</a>
+        <a href="#" class="sub-tab" data-sub="tracks">曲目</a>
+      </div>
+
+      <div class="nav-spacer"></div>
+      <div class="nav-actions">
+        <!-- 搜索图标 -->
+        <div class="search-container" id="searchContainer">
+          <button class="icon-btn" id="searchBtn" title="搜索">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+          </button>
+          <input type="text" class="search-input" placeholder="搜索..." id="searchInput">
+        </div>
+        <button class="icon-btn" id="themeBtn" title="切换主题">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+          </svg>
+        </button>
+      </div>
+    </nav>
+
+    <!-- ========== 音乐库页面 ========== -->
+    <div id="pageLibrary" class="page">
+      <div class="main-wrapper">
+        <div class="toolbar">
+          <span class="count">4,230 个专辑</span>
+        </div>
+
+        <!-- 专辑网格 -->
+        <div id="viewAlbums" class="grid">
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album1/400" alt="七里香"></div>
+            <div class="album-meta"><p class="album-title">七里香</p><p class="album-artist">周杰伦 · 2003</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album2/400" alt="范特西"></div>
+            <div class="album-meta"><p class="album-title">范特西</p><p class="album-artist">周杰伦 · 2001</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album3/400" alt="叶惠美"></div>
+            <div class="album-meta"><p class="album-title">叶惠美</p><p class="album-artist">周杰伦 · 2003</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album4/400" alt="十一月的萧邦"></div>
+            <div class="album-meta"><p class="album-title">十一月的萧邦</p><p class="album-artist">周杰伦 · 2005</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album5/400" alt="依然范特西"></div>
+            <div class="album-meta"><p class="album-title">依然范特西</p><p class="album-artist">周杰伦 · 2006</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album6/400" alt="我很忙"></div>
+            <div class="album-meta"><p class="album-title">我很忙</p><p class="album-artist">周杰伦 · 2007</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album7/400" alt="魔杰座"></div>
+            <div class="album-meta"><p class="album-title">魔杰座</p><p class="album-artist">周杰伦 · 2008</p></div>
+          </a>
+          <a href="#" class="album-card">
+            <div class="album-cover"><img src="https://picsum.photos/seed/album8/400" alt="跨时代"></div>
+            <div class="album-meta"><p class="album-title">跨时代</p><p class="album-artist">周杰伦 · 2010</p></div>
+          </a>
+        </div>
+
+        <!-- 艺术家网格 -->
+        <div id="viewArtists" class="artist-grid hidden">
+          <a href="#" class="artist-card">
+            <div class="artist-avatar"><img src="https://picsum.photos/seed/artist1/200" alt=""></div>
+            <p class="artist-name">周杰伦</p>
+            <p class="artist-count">15 张专辑</p>
+          </a>
+          <a href="#" class="artist-card">
+            <div class="artist-avatar"><img src="https://picsum.photos/seed/artist2/200" alt=""></div>
+            <p class="artist-name">林俊杰</p>
+            <p class="artist-count">12 张专辑</p>
+          </a>
+        </div>
+
+        <!-- 曲目列表 -->
+        <div id="viewTracks" class="hidden">
+          <div class="track-list">
+            <div class="track-header">
+              <span>#</span>
+              <span>标题</span>
+              <span>专辑</span>
+              <span style="text-align:right">时长</span>
+            </div>
+            <div class="track-row">
+              <span class="track-num">1</span>
+              <div class="track-info">
+                <div class="track-thumb"><img src="https://picsum.photos/seed/album1/100" alt=""></div>
+                <div><p class="track-name">我的地盘</p><p class="track-artist">周杰伦</p></div>
+              </div>
+              <span class="track-album">七里香</span>
+              <span class="track-duration">4:32</span>
+            </div>
+            <div class="track-row">
+              <span class="track-num">2</span>
+              <div class="track-info">
+                <div class="track-thumb"><img src="https://picsum.photos/seed/album1/100" alt=""></div>
+                <div><p class="track-name">七里香</p><p class="track-artist">周杰伦</p></div>
+              </div>
+              <span class="track-album">七里香</span>
+              <span class="track-duration">4:59</span>
+            </div>
+            <div class="track-row">
+              <span class="track-num">3</span>
+              <div class="track-info">
+                <div class="track-thumb"><img src="https://picsum.photos/seed/album1/100" alt=""></div>
+                <div><p class="track-name">借口</p><p class="track-artist">周杰伦</p></div>
+              </div>
+              <span class="track-album">七里香</span>
+              <span class="track-duration">4:26</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 元数据页面 ========== -->
+    <div id="pageMetadata" class="page hidden">
+      <div class="main-wrapper">
+        <div class="meta-layout">
+          <!-- 左侧 -->
+          <div class="meta-sidebar">
+            <!-- 待处理问题 -->
+            <div class="sidebar-card">
+              <h3>待处理问题</h3>
+              <div class="issue-list">
+                <div class="issue-row">
+                  <span class="issue-label"><span class="issue-dot yellow"></span>缺失封面</span>
+                  <span class="issue-count">326</span>
+                </div>
+                <div class="issue-row">
+                  <span class="issue-label"><span class="issue-dot red"></span>未知艺术家</span>
+                  <span class="issue-count">128</span>
+                </div>
+                <div class="issue-row">
+                  <span class="issue-label"><span class="issue-dot blue"></span>待审核</span>
+                  <span class="issue-count">45</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 快捷操作 -->
+            <div class="sidebar-card">
+              <h3>快捷操作</h3>
+              <div class="quick-actions">
+                <button class="quick-btn" id="btnScan">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                  扫描
+                </button>
+                <button class="quick-btn">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                  整理
+                </button>
+                <button class="quick-btn">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"/></svg>
+                  匹配
+                </button>
+                <button class="quick-btn">
+                  <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                  设置
+                </button>
+              </div>
+              <button class="action-btn">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                扫描音乐库
+              </button>
+            </div>
+
+            <!-- 待匹配队列 -->
+            <div class="sidebar-card">
+              <h3>待匹配 (45)</h3>
+              <div class="queue-list">
+                <div class="queue-item active">
+                  <div class="queue-thumb"><img src="https://picsum.photos/seed/q1/100" alt=""></div>
+                  <div class="queue-info">
+                    <p class="queue-title">01_track.mp3</p>
+                    <p class="queue-sub">未知艺术家</p>
+                  </div>
+                </div>
+                <div class="queue-item">
+                  <div class="queue-thumb"><img src="https://picsum.photos/seed/q2/100" alt=""></div>
+                  <div class="queue-info">
+                    <p class="queue-title">晴天.mp3</p>
+                    <p class="queue-sub">周杰伦</p>
+                  </div>
+                </div>
+                <div class="queue-item">
+                  <div class="queue-thumb"><img src="https://picsum.photos/seed/q3/100" alt=""></div>
+                  <div class="queue-info">
+                    <p class="queue-title">夜曲.mp3</p>
+                    <p class="queue-sub">周杰伦</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧工作区 -->
+          <div class="meta-main">
+            <div class="workspace">
+              <h4>当前匹配</h4>
+              <div class="current-item">
+                <div class="current-cover"><img src="https://picsum.photos/seed/q1/200" alt=""></div>
+                <div class="current-info">
+                  <h5>01_track.mp3</h5>
+                  <p>未知艺术家 · 未知专辑 · 4:32</p>
+                  <button class="apply-btn">应用到 MusicBrainz</button>
+                </div>
+              </div>
+
+              <h4 style="margin-top: 20px;">候选匹配</h4>
+              <div class="candidates">
+                <div class="candidate-card selected">
+                  <h6>我的地盘</h6>
+                  <p>周杰伦 · 七里香 · 2003</p>
+                  <span class="candidate-score">95%</span>
+                </div>
+                <div class="candidate-card">
+                  <h6>我的地盘</h6>
+                  <p>周杰伦 · 十一月的萧邦 · 2005</p>
+                  <span class="candidate-score">72%</span>
+                </div>
+                <div class="candidate-card">
+                  <h6>我的地盘</h6>
+                  <p>周杰伦 · 依然范特西 · 2006</p>
+                  <span class="candidate-score">65%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 设置页面 ========== -->
+    <div id="pageSettings" class="page hidden">
+      <div class="settings-page">
+        <h1>设置</h1>
+
+        <div class="settings-section">
+          <h2>音乐库</h2>
+          <div class="settings-row">
+            <label>音乐库路径</label>
+            <input type="text" value="/mnt/music">
+          </div>
+          <div class="settings-row">
+            <label>封面缓存</label>
+            <input type="text" value="/mnt/covers">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>数据库</h2>
+          <div class="settings-row">
+            <label>数据库类型</label>
+            <div class="segmented">
+              <button class="active">SQLite</button>
+              <button>PostgreSQL</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <label>连接字符串</label>
+            <span class="value">sqlite:///./database/sonicverse.db</span>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>文件整理</h2>
+          <div class="settings-row">
+            <label>目录结构</label>
+            <input type="text" value="{artist}/{year} - {album}/">
+          </div>
+          <div class="settings-row">
+            <label>文件命名</label>
+            <input type="text" value="{track:02d}. {title}.{ext}">
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h2>选项</h2>
+          <div class="settings-row">
+            <label>嵌入封面</label>
+            <button class="switch on"><span class="knob"></span></button>
+          </div>
+          <div class="settings-row">
+            <label>自动匹配</label>
+            <button class="switch on"><span class="knob"></span></button>
+          </div>
+          <div class="settings-row">
+            <label>写入 Tag</label>
+            <button class="switch on"><span class="knob"></span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // 主 Tab 切换
+    document.querySelectorAll('.main-tab').forEach(tab => {
+      tab.addEventListener('click', e => {
+        e.preventDefault();
+        document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        const page = tab.dataset.page;
+        document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+        document.getElementById('page' + page.charAt(0).toUpperCase() + page.slice(1)).classList.remove('hidden');
+
+        document.getElementById('subTabs').style.display = page === 'library' ? 'flex' : 'none';
+      });
+    });
+
+    // 子 Tab 切换
+    document.querySelectorAll('.sub-tab').forEach(tab => {
+      tab.addEventListener('click', e => {
+        e.preventDefault();
+        document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        const sub = tab.dataset.sub;
+        document.getElementById('viewAlbums').classList.add('hidden');
+        document.getElementById('viewArtists').classList.add('hidden');
+        document.getElementById('viewTracks').classList.add('hidden');
+        document.getElementById('view' + sub.charAt(0).toUpperCase() + sub.slice(1)).classList.remove('hidden');
+      });
+    });
+
+    // 搜索框展开/收起
+    const searchContainer = document.getElementById('searchContainer');
+    const searchBtn = document.getElementById('searchBtn');
+    const searchInput = document.getElementById('searchInput');
+
+    searchBtn.addEventListener('click', () => {
+      searchContainer.classList.toggle('expanded');
+      if (searchContainer.classList.contains('expanded')) {
+        searchInput.focus();
+      } else {
+        searchInput.value = '';
+      }
+    });
+
+    searchInput.addEventListener('blur', () => {
+      if (!searchInput.value) {
+        searchContainer.classList.remove('expanded');
+      }
+    });
+
+    // Switch 开关
+    document.querySelectorAll('.switch').forEach(sw => {
+      sw.addEventListener('click', () => sw.classList.toggle('on'));
+    });
+
+    // 主题切换
+    document.getElementById('themeBtn').addEventListener('click', () => {
+      const html = document.documentElement;
+      html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+
+    // 候选卡片选择
+    document.querySelectorAll('.candidate-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.querySelectorAll('.candidate-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+      });
+    });
+
+    // 队列项选择
+    document.querySelectorAll('.queue-item').forEach(item => {
+      item.addEventListener('click', () => {
+        document.querySelectorAll('.queue-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

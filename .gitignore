@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# Runtime data (mounted volumes)
+data/
+music/
+transfer/
+logs/
+*.db
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db

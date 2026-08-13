@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --radius-card: 10px;
+  --radius-control: 8px;
+  --motion-duration: .18s;
+  --motion-ease: ease-out;
+  --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-weight-regular: 500;
+  --font-weight-medium: 600;
+  --font-weight-semibold: 700;
+}
+
+[data-theme="dark"] {
+  --color-bg: #111827;
+  --color-surface: #1f2937;
+  --color-accent: #6366f1;
+  --color-text: #f3f4f6;
+  --color-text-muted: #9ca3af;
+  --color-border: rgba(255, 255, 255, .08);
+  --color-shadow: rgba(0, 0, 0, .35);
+  --color-switch-track-off: #374151;
+  --color-row-border: rgba(255, 255, 255, .06);
+}
+
+[data-theme="light"] {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-accent: #6366f1;
+  --color-text: #1f2937;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-shadow: rgba(15, 23, 42, .04);
+  --color-switch-track-off: #d1d5db;
+  --color-row-border: #f3f4f6;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #app {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-regular);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color var(--motion-duration) var(--motion-ease),
+              color var(--motion-duration) var(--motion-ease);
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}

@@ -1,0 +1,27 @@
+name: sonic-verse
+
+services:
+  sonicverse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zevenz/sonic-verse:latest
+    container_name: sonicverse
+    ports:
+      - "${SERVER_PORT:-7526}:7526"
+    env_file:
+      - .env
+    environment:
+      SERVER_PORT: ${SERVER_PORT:-7526}
+      DATABASE_TYPE: ${DATABASE_TYPE:-}
+      DATABASE_URL: ${DATABASE_URL:-}
+    volumes:
+      - ${MUSIC_DIR:-./music}:/music
+      - ${DATA_DIR:-./data}:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7526/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
