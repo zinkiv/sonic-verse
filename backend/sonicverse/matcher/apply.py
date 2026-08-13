@@ -88,11 +88,21 @@ async def _count_usage_for_artist(
 
 
 async def _clear_album_mbid(session, mbid: str, keep_album_id: str) -> None:
+    """Free ``mbid`` on other albums before reassignment.
+
+    Flush immediately so PostgreSQL unique index ``ix_albums_mbid`` is released
+    before we assign the same value to ``keep_album_id`` (autoflush can otherwise
+    UPDATE the new row first and raise UniqueViolationError).
+    """
     result = await session.execute(
         select(Album).where(Album.mbid == mbid, Album.id != keep_album_id)
     )
-    for other in result.scalars().all():
+    others = list(result.scalars().all())
+    if not others:
+        return
+    for other in others:
         other.mbid = None
+    await session.flush()
 
 
 async def _get_or_create_artist_by_name(session, name: str) -> Artist:
@@ -157,6 +167,17 @@ async def _overwrite_album(
     year: int | None,
     mbid: str | None,
 ) -> Album:
+    # Prefer the album that already owns this provider album id (unique mbid).
+    if mbid:
+        result = await session.execute(select(Album).where(Album.mbid == mbid))
+        album = result.scalar_one_or_none()
+        if album is not None:
+            album.title = title
+            album.artist_id = artist.id
+            if year is not None:
+                album.year = year
+            return album
+
     if track.album_id:
         result = await session.execute(select(Album).where(Album.id == track.album_id))
         current = result.scalar_one_or_none()
@@ -170,19 +191,8 @@ async def _overwrite_album(
                 if year is not None:
                     current.year = year
                 if mbid:
-                    await _clear_album_mbid(session, mbid, current.id)
                     current.mbid = mbid
                 return current
-
-    if mbid:
-        result = await session.execute(select(Album).where(Album.mbid == mbid))
-        album = result.scalar_one_or_none()
-        if album is not None:
-            album.title = title
-            album.artist_id = artist.id
-            if year is not None:
-                album.year = year
-            return album
 
     result = await session.execute(
         select(Album).where(Album.title == title, Album.artist_id == artist.id)
@@ -196,6 +206,8 @@ async def _overwrite_album(
         if year is not None:
             album.year = year
         if mbid:
+            # mbid is free after the lookup above; flush-clear kept for safety if
+            # another row raced in (Postgres unique) or session had stale state.
             await _clear_album_mbid(session, mbid, album.id)
             album.mbid = mbid
     return album

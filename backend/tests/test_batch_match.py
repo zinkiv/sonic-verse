@@ -51,9 +51,16 @@ def _result(
 
 
 class _Meta:
-    def __init__(self, title: str, duration_ms: int = 200_000):
+    def __init__(self, title: str, duration_ms: int = 200_000, cover_data=None):
         self.title = title
         self.duration_ms = duration_ms
+        self.cover_data = cover_data
+        self.artist = None
+        self.album = None
+        self.album_artist = None
+        self.year = None
+        self.track_number = None
+        self.disc_number = None
 
 
 @pytest.fixture
@@ -262,6 +269,70 @@ async def test_apply_imports_transfer_file_into_music(
         row = await s.get(Track, track.id)
         assert row is not None
         assert row.file_path == str(destination)
+
+
+async def test_apply_reuses_album_when_mbid_already_taken(
+    session, library, music_root: Path
+):
+    """Regression: assigning album_mbid that another album already owns must not
+    UniqueViolation on ix_albums_mbid (especially with cover_path in same flush).
+    """
+    from sonicverse.models import Album
+
+    artist = library["artist"]
+    owner = Album(title="七里香", artist_id=artist.id, year=2004, mbid="ne:album:3233528")
+    session.add(owner)
+    await session.flush()
+
+    solo = Album(title="杂项", artist_id=artist.id)
+    session.add(solo)
+    await session.flush()
+
+    path = music_root / "七里香.flac"
+    path.write_bytes(b"fLaC")
+    track = Track(
+        title="七里香",
+        artist_id=artist.id,
+        album_id=solo.id,
+        file_path=str(path),
+        duration_ms=200_000,
+    )
+    session.add(track)
+    await session.commit()
+    await session.refresh(track)
+
+    payload = ApplyPayload(
+        title="七里香",
+        artist="周杰伦",
+        album="七里香",
+        mbid="ne:song:7",
+        album_mbid="ne:album:3233528",
+        year=2004,
+        fetch_cover=False,
+        provider="netease",
+    )
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+    with (
+        patch("sonicverse.matcher.apply.Tagger.write_metadata", return_value=True),
+        patch(
+            "sonicverse.matcher.apply.MetadataReader.read",
+            return_value=_Meta("七里香"),
+        ),
+    ):
+        await apply_match_to_track(session, track, payload, cover_data=png)
+        await session.commit()
+
+    async with async_session_maker() as s:
+        row = await s.get(Track, track.id)
+        assert row is not None
+        assert row.album_id == owner.id
+        album = await s.get(Album, owner.id)
+        assert album is not None
+        assert album.mbid == "ne:album:3233528"
+        assert album.cover_path is not None
+        orphan = await s.get(Album, solo.id)
+        assert orphan is None
 
 
 async def test_apply_overwrites_existing_library_file(
