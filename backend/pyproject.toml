@@ -3,7 +3,7 @@ name = "sonicverse"
 version = "0.1.0"
 description = "Personal Digital Music Universe - Music metadata management and enhancement platform"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [
     { name = "SonicVerse Team" }
 ]
