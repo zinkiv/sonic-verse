@@ -1,10 +1,10 @@
 import type { ArtistSummary, Track } from '@/api'
 
-/** Split a credit string on commas, ampersands, slashes, or enumeration commas. */
+/** Split a credit string on commas, semicolons, ampersands, slashes, or enumeration commas. */
 export function splitArtistNames(raw: string | null | undefined): string[] {
   if (!raw?.trim()) return []
   const parts = raw
-    .split(/\s*[,&/、]\s*/)
+    .split(/\s*[,;；&/、]\s*/)
     .map((part) => part.trim())
     .filter(Boolean)
   if (parts.length === 0) return [raw.trim()]

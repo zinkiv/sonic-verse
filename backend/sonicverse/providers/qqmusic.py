@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from sonicverse.core.artists import split_artist_names
 from sonicverse.core.http import http_client
 from sonicverse.providers.base import AlbumResult, BaseProvider, TrackResult
 from sonicverse.providers.queries import merge_query_searches
@@ -45,6 +46,52 @@ def _decode_album_id(value: str) -> str | None:
     if value.startswith("qq:"):
         return value.split(":", 1)[1]
     return value or None
+
+
+def _singer_credits(singers: list) -> tuple[str, list[dict[str, str]]]:
+    """Normalize QQ singer blobs into individual names + optional avatar URLs.
+
+    QQ often packs multi-artist credits into one singer object::
+        {"mid": "...", "name": "侯明昊;陈都灵;田嘉瑞;…"}
+    That mid belongs to at most one person, so only single-name singers keep a
+    direct avatar URL; combined names are split for later per-artist lookup.
+    """
+    names: list[str] = []
+    images: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    for singer in singers:
+        if not isinstance(singer, dict):
+            continue
+        raw_name = (singer.get("name") or "").strip()
+        if not raw_name:
+            continue
+        parts = split_artist_names(raw_name)
+        if not parts:
+            parts = [raw_name]
+        mid = singer.get("mid") or singer.get("singerMID")
+        avatar = _qq_artist_url(str(mid) if mid else None)
+        # Only trust the mid when this blob is a single person.
+        attach_url = avatar if len(parts) == 1 else None
+        for part in parts:
+            key = part.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            names.append(part)
+            if attach_url:
+                images.append({"name": part, "url": attach_url})
+            else:
+                images.append({"name": part, "url": ""})
+
+    artist_name = ",".join(names) if names else "Unknown Artist"
+    # Drop empty URLs from the payload; apply will resolve missing ones.
+    artist_images = [item for item in images if item.get("url")]
+    # Keep name placeholders when we split a group credit but have no URLs yet,
+    # so callers know how many people were credited.
+    if not artist_images and names:
+        artist_images = [{"name": name, "url": ""} for name in names]
+    return artist_name, artist_images
 
 
 class QQMusicProvider(BaseProvider):
@@ -102,18 +149,7 @@ class QQMusicProvider(BaseProvider):
             if not songmid:
                 continue
             singers = song.get("singer") or []
-            artist_name = ",".join(
-                s.get("name", "") for s in singers if isinstance(s, dict) and s.get("name")
-            ) or "Unknown Artist"
-            artist_images: list[dict[str, str]] = []
-            for singer in singers:
-                if not isinstance(singer, dict):
-                    continue
-                singer_name = (singer.get("name") or "").strip()
-                singermid = singer.get("mid") or singer.get("singerMID")
-                avatar = _qq_artist_url(str(singermid) if singermid else None)
-                if singer_name and avatar:
-                    artist_images.append({"name": singer_name, "url": avatar})
+            artist_name, artist_images = _singer_credits(singers)
             album_name = song.get("albumname") or ""
             albummid = song.get("albummid") or ""
             song_title = song.get("songname") or song.get("title") or ""
@@ -123,6 +159,10 @@ class QQMusicProvider(BaseProvider):
             except (TypeError, ValueError):
                 interval = 0
 
+            first_avatar = next(
+                (item["url"] for item in artist_images if item.get("url")),
+                None,
+            )
             results.append(
                 TrackResult(
                     title=song_title,
@@ -134,7 +174,7 @@ class QQMusicProvider(BaseProvider):
                     album_mbid=_encode_id("album", str(albummid)) if albummid else None,
                     year=None,
                     cover_url=_qq_cover_url(albummid),
-                    artist_image_url=artist_images[0]["url"] if artist_images else None,
+                    artist_image_url=first_avatar,
                     artist_images=artist_images or None,
                 )
             )
@@ -200,6 +240,58 @@ class QQMusicProvider(BaseProvider):
         except Exception:
             logger.warning("QQ Music cover fetch failed: %s", mbid, exc_info=True)
         return None
+
+    async def lookup_artist_image(self, artist_name: str) -> Optional[str]:
+        """Resolve a singer avatar via QQ's dedicated singer search (t=1)."""
+        name = (artist_name or "").strip()
+        if not name:
+            return None
+        try:
+            response = await http_client().get(
+                _SEARCH_URL,
+                params={
+                    "w": name,
+                    "p": 1,
+                    "n": 10,
+                    "format": "json",
+                    "t": 1,  # singer
+                    "aggr": 0,
+                    "cr": 1,
+                    "platform": "yqq",
+                },
+                headers=_HEADERS,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            logger.warning("QQ Music singer search failed: %s", name, exc_info=True)
+            return None
+
+        singers = ((payload.get("data") or {}).get("singer") or {}).get("list") or []
+        target = name.casefold()
+        fallback: str | None = None
+        for singer in singers:
+            if not isinstance(singer, dict):
+                continue
+            singer_name = (
+                singer.get("singerName")
+                or singer.get("name")
+                or singer.get("title")
+                or ""
+            ).strip()
+            mid = (
+                singer.get("singerMID")
+                or singer.get("singer_mid")
+                or singer.get("mid")
+            )
+            url = _qq_artist_url(str(mid) if mid else None)
+            if not url:
+                continue
+            if singer_name.casefold() == target:
+                return url
+            if fallback is None and target in singer_name.casefold():
+                fallback = url
+        return fallback
 
     @staticmethod
     def _title_confidence(query: str, result: str) -> float:

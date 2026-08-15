@@ -278,7 +278,13 @@ async def _process_one_track(
         await _bump_job(job_id, needs_review=1, tracks_processed=1)
 
     # Avatar HTTP outside any open DB transaction.
-    if artist_image_url or artist_images:
+    provider_name = None
+    if payload is not None:
+        provider_name = payload.provider
+    elif candidates:
+        provider_name = candidates[0].provider or "qqmusic"
+
+    if artist_image_url or artist_images or provider_name:
         async with get_db_context() as session:
             track = await session.get(Track, track_id)
             if track is not None:
@@ -289,6 +295,7 @@ async def _process_one_track(
                         artist_image_url=artist_image_url,
                         artist_images=artist_images,
                         force=True,
+                        provider=provider_name,
                     )
                 except Exception:
                     logger.warning(

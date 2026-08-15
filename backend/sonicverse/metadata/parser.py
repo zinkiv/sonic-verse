@@ -32,6 +32,8 @@ class AudioMetadata:
     disc_number: int | None = None
     duration_ms: int | None = None
     cover_data: bytes | None = None
+    # When True, strip embedded art even if cover_data is None.
+    clear_cover: bool = False
     bitrate: int | None = None
     sample_rate: int | None = None
 

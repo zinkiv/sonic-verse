@@ -1,3 +1,5 @@
 """SonicVerse - Personal Digital Music Universe."""
 
-__version__ = "0.1.0"
+from sonicverse.core.version import resolve_app_version
+
+__version__ = resolve_app_version()

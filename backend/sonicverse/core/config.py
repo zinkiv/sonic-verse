@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from sonicverse.core.version import resolve_app_version
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -46,8 +47,16 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "SonicVerse"
-    app_version: str = "0.1.0"
+    # Overridable via APP_VERSION; Docker image bakes the git tag into /app/VERSION.
+    app_version: str = ""
     debug: bool = False
+
+    @field_validator("app_version", mode="before")
+    @classmethod
+    def default_app_version(cls, value: object) -> str:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return resolve_app_version()
 
     # Database: sqlite (default) or postgresql.
     # Empty database_url always falls back to local SQLite under data_path/database/.

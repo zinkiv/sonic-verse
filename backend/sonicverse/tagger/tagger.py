@@ -95,6 +95,8 @@ class Tagger:
                 desc="Cover",
                 data=metadata.cover_data,
             )
+        elif metadata.clear_cover and audio.tags is not None:
+            audio.tags.delall("APIC")
 
     def _write_vorbis(self, audio: FLAC | OggVorbis, metadata: AudioMetadata) -> None:
         """Write Vorbis Comment tags to FLAC/Ogg."""
@@ -128,6 +130,11 @@ class Tagger:
                 audio["METADATA_BLOCK_PICTURE"] = [
                     base64.b64encode(picture.write()).decode("ascii")
                 ]
+        elif metadata.clear_cover:
+            if isinstance(audio, FLAC):
+                audio.clear_pictures()
+            elif "METADATA_BLOCK_PICTURE" in audio:
+                del audio["METADATA_BLOCK_PICTURE"]
 
     def _write_mp4(self, audio: MP4, metadata: AudioMetadata) -> None:
         """Write MP4/M4A tags."""
@@ -158,3 +165,5 @@ class Tagger:
                 else MP4Cover.FORMAT_JPEG
             )
             audio["covr"] = [MP4Cover(metadata.cover_data, imageformat=imageformat)]
+        elif metadata.clear_cover and "covr" in audio:
+            del audio["covr"]

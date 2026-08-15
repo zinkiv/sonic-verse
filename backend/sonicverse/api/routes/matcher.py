@@ -1,9 +1,10 @@
 """Metadata matching API routes."""
 
+import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 
 from sonicverse.api.dependencies import DbSession
@@ -22,6 +23,7 @@ from sonicverse.matcher.apply import (
 from sonicverse.matcher.batch import request_cancel, start_match_job
 from sonicverse.matcher.percent import as_match_percent, clamp_match_threshold
 from sonicverse.matcher.search import search_and_store_candidates
+from sonicverse.metadata.parser import MetadataReader
 from sonicverse.models import MatchJob, MatchJobStatus, ProviderResult, Track
 from sonicverse.providers import provider_rank
 from sonicverse.schemas import TrackDetailResponse
@@ -38,6 +40,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tracks", tags=["matching"])
 jobs_router = APIRouter(prefix="/match-jobs", tags=["matching"])
+
+_MAX_COVER_BYTES = 12 * 1024 * 1024
+
+
+def _manual_mbid(track_id: str) -> str:
+    return f"manual:{track_id}"
+
+
+def _looks_like_image(data: bytes) -> bool:
+    if len(data) < 12:
+        return False
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if data.startswith(b"\xff\xd8\xff"):
+        return True
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return True
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return True
+    return False
 
 
 async def _track_detail(db, track_id: str) -> TrackDetailResponse:
@@ -234,6 +256,7 @@ async def apply_match(
         cover_url=data.cover_url,
         artist_image_url=data.artist_image_url,
         artist_images=tuple(data.artist_images) if data.artist_images else None,
+        force_artist_images=bool(data.artist_image_url or data.artist_images),
         provider=data.provider,
     )
     cover = None
@@ -249,7 +272,150 @@ async def apply_match(
         await apply_match_to_track(db, track, payload, cover_data=cover)
     except ApplyError as exc:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=exc.message) from exc
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    await db.commit()
+    return await _track_detail(db, track.id)
+
+
+@router.post("/{track_id}/manual-save", response_model=TrackDetailResponse)
+async def manual_save(
+    db: DbSession,
+    track_id: str,
+    title: str = Form(...),
+    artist: str = Form(...),
+    album: str = Form(""),
+    album_artist: str | None = Form(None),
+    filename: str | None = Form(None),
+    year: str | None = Form(None),
+    mbid: str | None = Form(None),
+    album_mbid: str | None = Form(None),
+    duration: str | None = Form(None),
+    provider: str = Form("qqmusic"),
+    cover_url: str | None = Form(None),
+    cover_source: str | None = Form(None),
+    cover: UploadFile | None = File(None),
+    artist_image_url: str | None = Form(None),
+    artist_images: str | None = Form(None),
+) -> TrackDetailResponse:
+    """Write user-edited tags (optional cover upload) and import into the library."""
+    result = await db.execute(select(Track).where(Track.id == track_id))
+    track = result.scalar_one_or_none()
+    if track is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    clean_title = (title or "").strip()
+    clean_artist = (artist or "").strip()
+    clean_album = (album or "").strip() or clean_title
+    clean_album_artist = (album_artist or "").strip() or None
+    clean_filename = (filename or "").strip() or None
+    if not clean_title or not clean_artist:
+        raise HTTPException(status_code=400, detail="title and artist are required")
+
+    parsed_year: int | None = None
+    if year is not None and str(year).strip():
+        try:
+            parsed_year = int(str(year).strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="year must be an integer") from exc
+
+    parsed_duration: int | None = None
+    if duration is not None and str(duration).strip():
+        try:
+            parsed_duration = int(str(duration).strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="duration must be an integer") from exc
+
+    source = (cover_source or "").strip().lower()
+    cover_data: bytes | None = None
+    clear_cover = source in {"none", "clear"}
+
+    if cover is not None and (cover.filename or cover.content_type):
+        raw = await cover.read(_MAX_COVER_BYTES + 1)
+        if len(raw) > _MAX_COVER_BYTES:
+            raise HTTPException(status_code=400, detail="Cover image is too large (max 12MB)")
+        if raw and not _looks_like_image(raw):
+            raise HTTPException(status_code=400, detail="Cover must be a PNG, JPEG, GIF, or WebP image")
+        cover_data = raw or None
+        source = "upload"
+        clear_cover = False
+
+    if cover_data is None and source == "file":
+        cover_data = await asyncio.to_thread(MetadataReader.read_cover, track.file_path)
+
+    clean_mbid = (mbid or "").strip() or _manual_mbid(track.id)
+    clean_album_mbid = (album_mbid or "").strip() or None
+    clean_cover_url = (cover_url or "").strip() or None
+    # Blob / local API preview URLs are not fetchable as remote covers.
+    if clean_cover_url and (
+        clean_cover_url.startswith("blob:")
+        or "/api/v1/tracks/" in clean_cover_url
+    ):
+        clean_cover_url = None
+
+    if cover_data is None and not clear_cover and source != "file" and clean_cover_url:
+        from sonicverse.matcher.apply import fetch_cover_bytes
+
+        await db.commit()
+        cover_data = await fetch_cover_bytes(
+            provider if provider in ("qqmusic", "netease") else "netease",
+            clean_album_mbid,
+            clean_cover_url,
+        )
+
+    parsed_artist_images: list[dict[str, str]] | None = None
+    if artist_images and str(artist_images).strip():
+        try:
+            raw_images = json.loads(artist_images)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400, detail="artist_images must be a JSON array"
+            ) from exc
+        if not isinstance(raw_images, list):
+            raise HTTPException(
+                status_code=400, detail="artist_images must be a JSON array"
+            )
+        parsed_artist_images = []
+        for item in raw_images:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if name and url:
+                parsed_artist_images.append({"name": name, "url": url})
+        if not parsed_artist_images:
+            parsed_artist_images = None
+
+    clean_artist_image_url = (artist_image_url or "").strip() or None
+    if (
+        not clean_artist_image_url
+        and parsed_artist_images
+    ):
+        clean_artist_image_url = parsed_artist_images[0]["url"]
+
+    payload = ApplyPayload(
+        title=clean_title,
+        artist=clean_artist,
+        album=clean_album,
+        mbid=clean_mbid,
+        album_mbid=clean_album_mbid,
+        album_artist=clean_album_artist,
+        filename=clean_filename,
+        year=parsed_year,
+        duration=parsed_duration,
+        fetch_cover=False,
+        cover_url=None,
+        clear_cover=clear_cover,
+        artist_image_url=clean_artist_image_url,
+        artist_images=tuple(parsed_artist_images) if parsed_artist_images else None,
+        force_artist_images=True,
+        provider=provider if provider in ("qqmusic", "netease") else "netease",
+    )
+    try:
+        await apply_match_to_track(db, track, payload, cover_data=cover_data)
+    except ApplyError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     await db.commit()
     return await _track_detail(db, track.id)

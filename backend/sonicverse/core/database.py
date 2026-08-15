@@ -1,5 +1,9 @@
 """Database configuration and session management."""
 
+from __future__ import annotations
+
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -13,6 +17,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from sonicverse.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -38,13 +44,19 @@ def _engine_kwargs() -> dict:
     # and avoid holding dead connections after long HTTP work.
     kwargs.update(
         {
-            "pool_size": 10,
-            "max_overflow": 20,
-            "pool_recycle": 1800,
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_recycle": 300,
             "pool_timeout": 30,
             "connect_args": {
                 "timeout": 30,
                 "command_timeout": 120,
+                # Helps when Postgres/NAS firewall drops idle TCP silently.
+                "server_settings": {
+                    "tcp_keepalives_idle": "30",
+                    "tcp_keepalives_interval": "10",
+                    "tcp_keepalives_count": "5",
+                },
             },
         }
     )
@@ -74,7 +86,9 @@ async_session_maker = async_sessionmaker(
 
 def is_disconnect_error(exc: BaseException) -> bool:
     """True when the DB connection dropped mid-operation (common with Postgres)."""
-    if isinstance(exc, (OperationalError, DBAPIError)) and getattr(exc, "connection_invalidated", False):
+    if isinstance(exc, (OperationalError, DBAPIError)) and getattr(
+        exc, "connection_invalidated", False
+    ):
         return True
     text = str(exc).lower()
     markers = (
@@ -84,18 +98,50 @@ def is_disconnect_error(exc: BaseException) -> bool:
         "server closed the connection",
         "connection reset",
         "broken pipe",
+        "connectionrefused",
+        "could not connect",
+        "timeout expired",
+        "network is unreachable",
     )
     return any(marker in text for marker in markers)
 
 
-async def init_db() -> None:
-    """Initialize database tables and apply lightweight column patches."""
+async def init_db(*, retries: int = 5) -> None:
+    """Initialize database tables and apply lightweight column patches.
+
+    Retries when Postgres closes the connection mid-migration/inspect (common on
+    NAS / flaky Docker networks).
+    """
     # Ensure association tables are registered on Base.metadata.
     import sonicverse.models  # noqa: F401
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_add_missing_columns)
+    last_exc: BaseException | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            # Keep each transaction short so a dropped link does not abort both steps.
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            async with engine.begin() as conn:
+                await conn.run_sync(_add_missing_columns)
+            if attempt > 1:
+                logger.info("Database init succeeded on attempt %s", attempt)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if not is_disconnect_error(exc):
+                raise
+            logger.warning(
+                "Database init interrupted (attempt %s/%s): %s",
+                attempt,
+                retries,
+                exc,
+            )
+            await engine.dispose()
+            if attempt < retries:
+                await asyncio.sleep(min(2 * attempt, 10))
+
+    assert last_exc is not None
+    raise last_exc
 
 
 def _add_missing_columns(sync_conn) -> None:

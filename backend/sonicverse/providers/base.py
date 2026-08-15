@@ -68,3 +68,7 @@ class BaseProvider(ABC):
     async def get_cover(self, mbid: str) -> Optional[bytes]:
         """Get album cover by provider-specific album/release id."""
         ...
+
+    async def lookup_artist_image(self, artist_name: str) -> Optional[str]:
+        """Optional direct artist-avatar lookup. Default: unsupported."""
+        return None

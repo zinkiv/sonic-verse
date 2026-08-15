@@ -18,6 +18,8 @@ async def normalize_combined_artists(session, *, commit: bool = True) -> int:
         select(Artist).where(
             or_(
                 Artist.name.contains(","),
+                Artist.name.contains(";"),
+                Artist.name.contains("；"),
                 Artist.name.contains("&"),
                 Artist.name.contains("/"),
                 Artist.name.contains("、"),

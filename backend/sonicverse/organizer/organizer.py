@@ -63,6 +63,19 @@ class FileOrganizer:
         )
         return self.root_path / dir_path / filename
 
+    def get_destination_path_for_filename(
+        self,
+        filename: str,
+        file_path: str | Path,
+    ) -> Path:
+        """Build a library path from an editable filename (``歌手名-歌曲名.ext``)."""
+        fallback_ext = Path(file_path).suffix.lstrip(".") or "mp3"
+        raw = (filename or "").strip().replace("\\", "/").split("/")[-1]
+        path = Path(raw)
+        stem = self._sanitize_path_component(path.stem or "Unknown Track")
+        ext = path.suffix.lstrip(".") or fallback_ext
+        return self.root_path / f"{stem}.{ext}"
+
     def organize_file(
         self,
         source_path: str | Path,

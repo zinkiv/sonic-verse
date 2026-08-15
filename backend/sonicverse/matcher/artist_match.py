@@ -56,18 +56,30 @@ async def match_artist_metadata(
         return artist
 
     provider = get_provider(provider_name)
+    image_url: str | None = None
     try:
-        results = await provider.search_track(title="", artist=artist.name)
+        image_url = await provider.lookup_artist_image(artist.name)
     except Exception:
         logger.warning(
-            "Artist metadata search failed for %s via %s",
+            "Artist direct image lookup failed for %s via %s",
             artist.name,
             provider_name,
             exc_info=True,
         )
-        raise
 
-    image_url = _pick_artist_image_url(artist.name, results)
+    if not image_url:
+        try:
+            results = await provider.search_track(title="", artist=artist.name)
+        except Exception:
+            logger.warning(
+                "Artist metadata search failed for %s via %s",
+                artist.name,
+                provider_name,
+                exc_info=True,
+            )
+            raise
+        image_url = _pick_artist_image_url(artist.name, results)
+
     if not image_url:
         return artist
 

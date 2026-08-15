@@ -16,6 +16,12 @@ def test_split_on_slash():
     assert split_artist_names("浅影阿/汐音社") == ["浅影阿", "汐音社"]
 
 
+def test_split_on_semicolon():
+    assert split_artist_names("侯明昊;陈都灵;田嘉瑞") == ["侯明昊", "陈都灵", "田嘉瑞"]
+    assert split_artist_names("侯明昊；陈都灵；田嘉瑞") == ["侯明昊", "陈都灵", "田嘉瑞"]
+    assert split_artist_names("A; B; C") == ["A", "B", "C"]
+
+
 def test_split_dedupes_case_insensitively():
     assert split_artist_names("A, a & B") == ["A", "B"]
 
@@ -32,4 +38,5 @@ def test_join_uses_english_comma_without_spaces():
     assert join_artist_names(["周杰伦", "费玉清"]) == "周杰伦,费玉清"
     assert join_artist_names("周杰伦 & 费玉清") == "周杰伦,费玉清"
     assert join_artist_names("浅影阿 / 汐音社") == "浅影阿,汐音社"
+    assert join_artist_names("侯明昊;陈都灵") == "侯明昊,陈都灵"
     assert join_artist_names(None) == ""

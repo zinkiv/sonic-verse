@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     image: zevenz/sonic-verse:latest
     container_name: sonicverse
     ports:

@@ -18,7 +18,7 @@ import {
 } from '@/api'
 import { useLibraryStore } from '@/stores/library'
 import { trackCoverSrc } from '@/utils/cover'
-import { formatArtistName, trackArtistLabel } from '@/utils/artists'
+import { formatArtistName, splitArtistNames, trackArtistLabel } from '@/utils/artists'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -29,8 +29,8 @@ type IssueFilter = MetadataIssue
 type LibraryIssueFilter = Exclude<IssueFilter, 'transfer' | 'all'>
 
 const PROVIDERS: { value: MetadataProvider; labelKey: string }[] = [
-  { value: 'netease', labelKey: 'metadata.providerNetease' },
   { value: 'qqmusic', labelKey: 'metadata.providerQq' },
+  { value: 'netease', labelKey: 'metadata.providerNetease' },
 ]
 
 const ISSUE_OPTIONS: { value: LibraryIssueFilter; labelKey: string; dot: string }[] = [
@@ -42,7 +42,7 @@ const ISSUE_OPTIONS: { value: LibraryIssueFilter; labelKey: string; dot: string 
 const VALID_ISSUES: IssueFilter[] = ['transfer', ...ISSUE_OPTIONS.map((option) => option.value)]
 
 const activeIssue = ref<IssueFilter>('transfer')
-const provider = ref<MetadataProvider>('netease')
+const provider = ref<MetadataProvider>('qqmusic')
 const queue = ref<Track[]>([])
 const queueTotal = ref(0)
 const queuePage = ref(1)
@@ -58,10 +58,24 @@ const error = ref<string | null>(null)
 const statusMessage = ref<string | null>(null)
 
 const editorOpen = ref(false)
+const coverFile = ref<File | null>(null)
+const coverObjectUrl = ref<string | null>(null)
+const coverInput = ref<HTMLInputElement | null>(null)
+/** Selected tile id: file | match:<url> | upload */
+const selectedCoverId = ref<string | null>(null)
+/** True when user explicitly cleared cover; save sends cover_source=none. */
+const coverCleared = ref(false)
+const filenameTouched = ref(false)
+const editArtists = ref<string[]>([])
+const artistDraft = ref('')
+const albumArtistChoice = ref('')
+const ALBUM_ARTIST_ALL = '__all__'
 const editForm = ref({
   title: '',
+  filename: '',
   artist: '',
   album: '',
+  album_artist: '',
   year: '' as string,
   mbid: '',
   album_mbid: '' as string,
@@ -69,9 +83,20 @@ const editForm = ref({
   cover_url: null as string | null,
   artist_image_url: null as string | null,
   artist_images: null as { name: string; url: string }[] | null,
-  provider: 'netease' as MetadataProvider,
+  provider: 'qqmusic' as MetadataProvider,
   score: 0,
 })
+
+type CoverOption = {
+  id: string
+  kind: 'file' | 'match' | 'upload'
+  src: string
+  remoteUrl?: string
+}
+
+type DisplayCandidate = MatchCandidate & {
+  origin: 'file' | 'provider'
+}
 
 const musicPath = ref<string | null>(null)
 const transferPath = ref<string | null>(null)
@@ -91,6 +116,88 @@ let matchPollTimer: ReturnType<typeof setTimeout> | undefined
 const selectedTrack = computed(
   () => queue.value.find((track) => track.id === selectedId.value) ?? null
 )
+
+const coverOptions = computed((): CoverOption[] => {
+  const options: CoverOption[] = []
+  const seen = new Set<string>()
+  const track = selectedTrack.value
+
+  if (track?.file_tags?.has_cover) {
+    const src = trackCoverSrc(track.id, track.updated_at, 'file')
+    options.push({ id: 'file', kind: 'file', src })
+    seen.add(src)
+  }
+
+  for (const candidate of candidates.value) {
+    const url = (candidate.cover_url || '').trim()
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    options.push({ id: `match:${url}`, kind: 'match', src: url, remoteUrl: url })
+  }
+
+  if (coverObjectUrl.value) {
+    options.push({ id: 'upload', kind: 'upload', src: coverObjectUrl.value })
+  }
+
+  return options
+})
+
+const selectedCover = computed(
+  () => coverOptions.value.find((item) => item.id === selectedCoverId.value) ?? null
+)
+
+const editorCoverSrc = computed(() => selectedCover.value?.src ?? null)
+
+const albumArtistOptions = computed(() => {
+  const names = editArtists.value
+  const options = names.map((name) => ({ value: name, label: name }))
+  if (names.length > 1) {
+    const allLabel = names.join(',')
+    options.push({
+      value: ALBUM_ARTIST_ALL,
+      label: allLabel,
+    })
+  }
+  return options
+})
+
+const displayCandidates = computed((): DisplayCandidate[] => {
+  const track = selectedTrack.value
+  const items: DisplayCandidate[] = []
+  if (track) {
+    const tags = track.file_tags
+    const title = (tags?.title || track.title || '').trim()
+    const artist = (
+      formatArtistName(tags?.artist) ||
+      tags?.artist ||
+      trackArtistLabel(track) ||
+      ''
+    ).trim()
+    const album = (tags?.album || track.album?.title || '').trim()
+    items.push({
+      origin: 'file',
+      title: title || track.title,
+      artist: artist || t('metadata.unknownArtist'),
+      album,
+      duration: track.duration_ms ? Math.round(track.duration_ms / 1000) : 0,
+      mbid: `file:${track.id}`,
+      album_mbid: null,
+      year: track.album?.year ?? null,
+      confidence: 0,
+      score: 0,
+      cover_url: tags?.has_cover
+        ? trackCoverSrc(track.id, track.updated_at, 'file')
+        : null,
+      artist_image_url: null,
+      artist_images: null,
+      provider: null,
+    })
+  }
+  for (const candidate of candidates.value) {
+    items.push({ ...candidate, origin: 'provider' })
+  }
+  return items
+})
 
 const issueCounts = computed<Record<LibraryIssueFilter, number>>(() => ({
   missing_album: libraryStore.stats.missing_albums,
@@ -445,31 +552,220 @@ async function runMatch(trackId: string) {
   }
 }
 
+function sanitizeFilenamePart(value: string): string {
+  return value
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/\.+$/g, '')
+    .trim()
+}
+
+function trackExtension(track: Track | null | undefined): string {
+  if (!track?.file_path) return '.flac'
+  const name = track.file_path.split(/[/\\]/).pop() || ''
+  const dot = name.lastIndexOf('.')
+  return dot >= 0 ? name.slice(dot) : '.flac'
+}
+
+function defaultLibraryFilename(artist: string, title: string, ext: string): string {
+  const artistPart = sanitizeFilenamePart(formatArtistName(artist) || artist) || 'Unknown Artist'
+  const titlePart = sanitizeFilenamePart(title) || 'Unknown Track'
+  const suffix = ext.startsWith('.') ? ext : `.${ext}`
+  return `${artistPart}-${titlePart}${suffix}`
+}
+
+function syncFilenameFromFields() {
+  if (filenameTouched.value) return
+  editForm.value.filename = defaultLibraryFilename(
+    editArtists.value.join(',') || editForm.value.artist,
+    editForm.value.title,
+    trackExtension(selectedTrack.value)
+  )
+}
+
+function onFilenameInput() {
+  filenameTouched.value = true
+}
+
+function onTitleOrArtistInput() {
+  syncFilenameFromFields()
+}
+
+function syncArtistsToForm() {
+  editForm.value.artist = editArtists.value.join(',')
+  if (
+    albumArtistChoice.value &&
+    albumArtistChoice.value !== ALBUM_ARTIST_ALL &&
+    !editArtists.value.includes(albumArtistChoice.value)
+  ) {
+    albumArtistChoice.value =
+      editArtists.value.length > 1 ? ALBUM_ARTIST_ALL : editArtists.value[0] || ''
+  } else if (!albumArtistChoice.value && editArtists.value.length === 1) {
+    albumArtistChoice.value = editArtists.value[0]
+  } else if (editArtists.value.length <= 1 && albumArtistChoice.value === ALBUM_ARTIST_ALL) {
+    albumArtistChoice.value = editArtists.value[0] || ''
+  }
+  editForm.value.album_artist = resolveAlbumArtist()
+  syncFilenameFromFields()
+}
+
+function resolveAlbumArtist(): string {
+  if (!editArtists.value.length) return ''
+  if (albumArtistChoice.value === ALBUM_ARTIST_ALL || !albumArtistChoice.value) {
+    return editArtists.value.join(',')
+  }
+  return albumArtistChoice.value
+}
+
+function setEditArtistsFromRaw(raw: string) {
+  editArtists.value = splitArtistNames(raw)
+  artistDraft.value = ''
+  albumArtistChoice.value =
+    editArtists.value.length > 1 ? ALBUM_ARTIST_ALL : editArtists.value[0] || ''
+  syncArtistsToForm()
+}
+
+function removeEditArtist(index: number) {
+  if (saving.value) return
+  editArtists.value = editArtists.value.filter((_, i) => i !== index)
+  syncArtistsToForm()
+}
+
+function clearEditArtists() {
+  if (saving.value) return
+  editArtists.value = []
+  albumArtistChoice.value = ''
+  syncArtistsToForm()
+}
+
+function commitArtistDraft() {
+  const name = artistDraft.value.trim()
+  if (!name) return
+  const key = name.toLocaleLowerCase()
+  if (!editArtists.value.some((item) => item.toLocaleLowerCase() === key)) {
+    editArtists.value = [...editArtists.value, name]
+  }
+  artistDraft.value = ''
+  if (editArtists.value.length > 1 && !albumArtistChoice.value) {
+    albumArtistChoice.value = ALBUM_ARTIST_ALL
+  }
+  syncArtistsToForm()
+}
+
+function onArtistDraftKeydown(event: KeyboardEvent) {
+  if (event.key === 'Enter' || event.key === ',') {
+    event.preventDefault()
+    commitArtistDraft()
+  } else if (event.key === 'Backspace' && !artistDraft.value && editArtists.value.length) {
+    removeEditArtist(editArtists.value.length - 1)
+  }
+}
+
+function onAlbumArtistChange() {
+  editForm.value.album_artist = resolveAlbumArtist()
+}
+
 function queryMetadata() {
   if (!selectedTrack.value || workspaceBusy.value) return
   void runMatch(selectedTrack.value.id)
 }
 
-function openCandidate(candidate: MatchCandidate) {
+function openCandidate(candidate: DisplayCandidate) {
+  revokeCoverObjectUrl()
+  coverFile.value = null
+  coverCleared.value = false
+  filenameTouched.value = false
+  const fromFile = candidate.origin === 'file'
+  const artist = formatArtistName(candidate.artist) || candidate.artist
+  const title = candidate.title
+  setEditArtistsFromRaw(artist)
   editForm.value = {
-    title: candidate.title,
-    artist: formatArtistName(candidate.artist) || candidate.artist,
+    ...editForm.value,
+    title,
+    filename: defaultLibraryFilename(
+      editArtists.value.join(',') || artist,
+      title,
+      trackExtension(selectedTrack.value)
+    ),
+    artist: editArtists.value.join(',') || artist,
     album: candidate.album,
+    album_artist: resolveAlbumArtist(),
     year: candidate.year != null ? String(candidate.year) : '',
-    mbid: candidate.mbid,
-    album_mbid: candidate.album_mbid ?? '',
+    mbid: fromFile ? '' : candidate.mbid,
+    album_mbid: fromFile ? '' : candidate.album_mbid ?? '',
     duration: candidate.duration || 0,
-    cover_url: candidate.cover_url ?? null,
-    artist_image_url: candidate.artist_image_url ?? null,
-    artist_images: candidate.artist_images ?? null,
+    cover_url: fromFile ? null : candidate.cover_url ?? null,
+    artist_image_url: fromFile ? null : candidate.artist_image_url ?? null,
+    artist_images: fromFile ? null : candidate.artist_images ?? null,
     provider: candidate.provider || provider.value,
-    score: scorePercent(candidate),
+    score: fromFile ? 0 : scorePercent(candidate),
   }
   editorOpen.value = true
+  if (fromFile) {
+    selectedCoverId.value = selectedTrack.value?.file_tags?.has_cover ? 'file' : null
+  } else {
+    const matchUrl = (candidate.cover_url || '').trim()
+    if (matchUrl) {
+      selectedCoverId.value = `match:${matchUrl}`
+    } else if (selectedTrack.value?.file_tags?.has_cover) {
+      selectedCoverId.value = 'file'
+    } else {
+      selectedCoverId.value = null
+    }
+  }
+}
+
+function revokeCoverObjectUrl() {
+  if (coverObjectUrl.value) {
+    URL.revokeObjectURL(coverObjectUrl.value)
+    coverObjectUrl.value = null
+  }
+}
+
+function selectCoverOption(option: CoverOption) {
+  if (saving.value) return
+  coverCleared.value = false
+  selectedCoverId.value = option.id
+  editForm.value.cover_url = option.kind === 'match' ? option.remoteUrl ?? null : null
+}
+
+function clearSelectedCover(event?: Event) {
+  event?.stopPropagation()
+  if (saving.value) return
+  revokeCoverObjectUrl()
+  coverFile.value = null
+  selectedCoverId.value = null
+  editForm.value.cover_url = null
+  coverCleared.value = true
+}
+
+function pickCoverFile() {
+  if (saving.value) return
+  coverInput.value?.click()
+}
+
+function onCoverFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement | null
+  const file = input?.files?.[0]
+  if (input) input.value = ''
+  if (!file || !file.type.startsWith('image/')) return
+  revokeCoverObjectUrl()
+  coverFile.value = file
+  coverObjectUrl.value = URL.createObjectURL(file)
+  selectedCoverId.value = 'upload'
+  editForm.value.cover_url = coverObjectUrl.value
+  coverCleared.value = false
 }
 
 function closeEditor() {
   editorOpen.value = false
+  revokeCoverObjectUrl()
+  coverFile.value = null
+  selectedCoverId.value = null
+  coverCleared.value = false
+  filenameTouched.value = false
+  editArtists.value = []
+  artistDraft.value = ''
+  albumArtistChoice.value = ''
 }
 
 async function saveEditedMetadata() {
@@ -477,7 +773,8 @@ async function saveEditedMetadata() {
   if (!track || saving.value) return
 
   const title = editForm.value.title.trim()
-  const artist = editForm.value.artist.trim()
+  commitArtistDraft()
+  const artist = editArtists.value.join(',').trim()
   const album = editForm.value.album.trim()
   if (!title || !artist) {
     error.value = t('metadata.editRequired')
@@ -490,20 +787,53 @@ async function saveEditedMetadata() {
   try {
     const yearRaw = editForm.value.year.trim()
     const year = yearRaw ? Number.parseInt(yearRaw, 10) : null
-    await api.post<Track>(`/tracks/${track.id}/apply`, {
-      title,
-      artist,
-      album: album || title,
-      mbid: editForm.value.mbid,
-      album_mbid: editForm.value.album_mbid || null,
-      year: Number.isFinite(year) ? year : null,
-      duration: editForm.value.duration || null,
-      fetch_cover: true,
-      cover_url: editForm.value.cover_url,
-      artist_image_url: editForm.value.artist_image_url,
-      artist_images: editForm.value.artist_images,
-      provider: editForm.value.provider,
-    })
+    const formData = new FormData()
+    formData.append('title', title)
+    formData.append('artist', artist)
+    formData.append('album', album || title)
+    const albumArtist = resolveAlbumArtist().trim()
+    if (albumArtist) {
+      formData.append('album_artist', albumArtist)
+    }
+    const filename = editForm.value.filename.trim()
+    if (filename) {
+      formData.append('filename', filename)
+    }
+    if (yearRaw && Number.isFinite(year)) {
+      formData.append('year', String(year))
+    }
+    if (editForm.value.mbid) {
+      formData.append('mbid', editForm.value.mbid)
+    }
+    if (editForm.value.album_mbid) {
+      formData.append('album_mbid', editForm.value.album_mbid)
+    }
+    if (editForm.value.duration) {
+      formData.append('duration', String(editForm.value.duration))
+    }
+    formData.append('provider', editForm.value.provider)
+
+    if ((editForm.value.artist_image_url || '').trim()) {
+      formData.append('artist_image_url', editForm.value.artist_image_url!.trim())
+    }
+    if (editForm.value.artist_images?.length) {
+      formData.append('artist_images', JSON.stringify(editForm.value.artist_images))
+    }
+
+    const cover = selectedCover.value
+    if (coverCleared.value && !cover) {
+      formData.append('cover_source', 'none')
+    } else if (cover?.kind === 'file') {
+      formData.append('cover_source', 'file')
+    } else if (cover?.kind === 'match' && cover.remoteUrl) {
+      formData.append('cover_source', 'match')
+      formData.append('cover_url', cover.remoteUrl)
+    } else if (cover?.kind === 'upload' && coverFile.value) {
+      formData.append('cover_source', 'upload')
+      formData.append('cover', coverFile.value)
+    }
+
+    await api.upload<Track>(`/tracks/${track.id}/manual-save`, formData)
     closeEditor()
     statusMessage.value = t('metadata.saveSuccess')
     await libraryStore.fetchStats()
@@ -606,6 +936,7 @@ watch(
 onBeforeUnmount(() => {
   clearPoll()
   clearMatchPoll()
+  revokeCoverObjectUrl()
 })
 </script>
 
@@ -834,14 +1165,16 @@ onBeforeUnmount(() => {
 
             <h4 class="section-title">{{ t('metadata.candidates') }}</h4>
             <div v-if="matching" class="candidates-empty">{{ t('metadata.matching') }}</div>
-            <div v-else-if="candidates.length === 0" class="candidates-empty">
-              {{ t('metadata.noCandidatesHint') }}
-            </div>
             <div v-else class="candidates">
               <button
-                v-for="candidate in candidates"
-                :key="`${candidate.provider}-${candidate.mbid}`"
+                v-for="candidate in displayCandidates"
+                :key="
+                  candidate.origin === 'file'
+                    ? `file-${selectedTrack?.id}`
+                    : `${candidate.provider}-${candidate.mbid}`
+                "
                 class="candidate-card"
+                :class="{ 'is-file': candidate.origin === 'file' }"
                 @click="openCandidate(candidate)"
               >
                 <div class="candidate-cover">
@@ -850,7 +1183,8 @@ onBeforeUnmount(() => {
                     :src="candidate.cover_url"
                     :alt="candidate.title"
                     loading="lazy"
-                    referrerpolicy="no-referrer"
+                    :referrerpolicy="candidate.origin === 'provider' ? 'no-referrer' : undefined"
+                    @error="hideBrokenCover"
                   />
                   <div v-else class="cover-placeholder">♪</div>
                 </div>
@@ -858,12 +1192,24 @@ onBeforeUnmount(() => {
                   <h6>{{ candidate.title }}</h6>
                   <p>
                     {{ formatArtistName(candidate.artist) || candidate.artist }}
-                    · {{ candidate.album }}
+                    <template v-if="candidate.album"> · {{ candidate.album }}</template>
                     <template v-if="candidate.year"> · {{ candidate.year }}</template>
                   </p>
                   <div class="candidate-meta">
-                    <span class="candidate-source">{{ providerLabel(candidate.provider) }}</span>
-                    <span class="candidate-score">{{ scorePercent(candidate) }}%</span>
+                    <span class="candidate-source">
+                      {{
+                        candidate.origin === 'file'
+                          ? t('metadata.fileMetadata')
+                          : providerLabel(candidate.provider)
+                      }}
+                    </span>
+                    <span
+                      v-if="candidate.origin === 'file'"
+                      class="candidate-score file-edit"
+                    >
+                      {{ t('metadata.editAction') }}
+                    </span>
+                    <span v-else class="candidate-score">{{ scorePercent(candidate) }}%</span>
                   </div>
                 </div>
               </button>
@@ -886,22 +1232,167 @@ onBeforeUnmount(() => {
           <button class="editor-close" type="button" @click="closeEditor">×</button>
         </div>
 
-        <div class="editor-body" :class="{ 'no-cover': !editForm.cover_url }">
-          <div v-if="editForm.cover_url" class="editor-cover">
-            <img :src="editForm.cover_url" :alt="editForm.title" />
+        <div class="editor-body">
+          <div class="editor-cover-col">
+            <div class="editor-cover" :class="{ empty: !editorCoverSrc }">
+              <img v-if="editorCoverSrc" :src="editorCoverSrc" :alt="editForm.title" />
+              <div v-else class="cover-placeholder editor-cover-hint">♪</div>
+              <button
+                v-if="editorCoverSrc"
+                type="button"
+                class="cover-clear"
+                :disabled="saving"
+                :title="t('metadata.clearCover')"
+                @click="clearSelectedCover"
+              >
+                ×
+              </button>
+            </div>
+            <div class="cover-picker">
+              <div class="cover-picker-head">
+                <span>{{ t('metadata.coverSelectTitle') }}</span>
+                <span class="cover-picker-count">{{ coverOptions.length }}</span>
+              </div>
+              <div class="cover-grid">
+                <button
+                  v-for="option in coverOptions"
+                  :key="option.id"
+                  type="button"
+                  class="cover-tile"
+                  :class="{ active: selectedCoverId === option.id }"
+                  :disabled="saving"
+                  :title="
+                    option.kind === 'file'
+                      ? t('metadata.coverFromFile')
+                      : option.kind === 'upload'
+                        ? t('metadata.coverFromUpload')
+                        : t('metadata.coverFromMatch')
+                  "
+                  @click="selectCoverOption(option)"
+                >
+                  <img
+                    :src="option.src"
+                    alt=""
+                    :referrerpolicy="option.kind === 'match' ? 'no-referrer' : undefined"
+                    @error="hideBrokenCover"
+                  />
+                  <span
+                    v-if="selectedCoverId === option.id"
+                    class="cover-check"
+                    aria-hidden="true"
+                  >
+                    ✓
+                  </span>
+                  <span
+                    v-if="selectedCoverId === option.id"
+                    class="cover-tile-clear"
+                    role="button"
+                    tabindex="0"
+                    :title="t('metadata.clearCover')"
+                    @click="clearSelectedCover"
+                    @keydown.enter.prevent="clearSelectedCover"
+                  >
+                    ×
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  class="cover-tile cover-tile-add"
+                  :disabled="saving"
+                  :title="t('metadata.uploadCover')"
+                  @click="pickCoverFile"
+                >
+                  <span class="cover-add-icon" aria-hidden="true">+</span>
+                </button>
+              </div>
+            </div>
           </div>
+
           <div class="editor-fields">
             <label>
               <span>{{ t('metadata.fieldTitle') }}</span>
-              <input v-model="editForm.title" type="text" />
+              <input
+                v-model="editForm.title"
+                type="text"
+                @input="onTitleOrArtistInput"
+              />
+            </label>
+            <label>
+              <span>{{ t('metadata.fieldFilename') }}</span>
+              <input
+                v-model="editForm.filename"
+                type="text"
+                :placeholder="t('metadata.filenameHint')"
+                @input="onFilenameInput"
+              />
             </label>
             <label>
               <span>{{ t('metadata.fieldArtist') }}</span>
-              <input v-model="editForm.artist" type="text" />
+              <div class="artist-chips" :class="{ disabled: saving }">
+                <span
+                  v-for="(name, index) in editArtists"
+                  :key="`${name}-${index}`"
+                  class="artist-chip"
+                >
+                  <span class="artist-chip-text">{{ name }}</span>
+                  <button
+                    type="button"
+                    class="artist-chip-remove"
+                    :disabled="saving"
+                    :aria-label="t('metadata.removeArtist', { name })"
+                    @click="removeEditArtist(index)"
+                  >
+                    ×
+                  </button>
+                </span>
+                <input
+                  v-model="artistDraft"
+                  class="artist-chip-input"
+                  type="text"
+                  :disabled="saving"
+                  :placeholder="editArtists.length ? '' : t('metadata.artistChipPlaceholder')"
+                  @keydown="onArtistDraftKeydown"
+                  @blur="commitArtistDraft"
+                />
+                <button
+                  v-if="editArtists.length"
+                  type="button"
+                  class="artist-chips-clear"
+                  :disabled="saving"
+                  :title="t('metadata.clearArtists')"
+                  @click="clearEditArtists"
+                >
+                  ×
+                </button>
+              </div>
             </label>
             <label>
               <span>{{ t('metadata.fieldAlbum') }}</span>
               <input v-model="editForm.album" type="text" />
+            </label>
+            <label>
+              <span>{{ t('metadata.fieldAlbumArtist') }}</span>
+              <select
+                v-model="albumArtistChoice"
+                class="album-artist-select"
+                :disabled="saving || albumArtistOptions.length === 0"
+                @change="onAlbumArtistChange"
+              >
+                <option
+                  v-if="albumArtistOptions.length === 0"
+                  value=""
+                  disabled
+                >
+                  {{ t('metadata.albumArtistEmpty') }}
+                </option>
+                <option
+                  v-for="option in albumArtistOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
             </label>
             <label>
               <span>{{ t('metadata.fieldYear') }}</span>
@@ -911,6 +1402,14 @@ onBeforeUnmount(() => {
               {{ t('metadata.fieldScore') }}: {{ editForm.score }}%
             </p>
           </div>
+
+          <input
+            ref="coverInput"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            hidden
+            @change="onCoverFileSelected"
+          />
         </div>
 
         <div class="editor-footer">
@@ -1421,6 +1920,10 @@ onBeforeUnmount(() => {
   border-color: var(--color-accent);
 }
 
+.candidate-card.is-file {
+  border-style: dashed;
+}
+
 .candidate-card.selected {
   border-color: var(--color-accent);
   background: rgba(99, 102, 241, 0.1);
@@ -1492,6 +1995,12 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.candidate-score.file-edit {
+  background: transparent;
+  color: var(--color-accent);
+  border: 1px solid var(--color-accent);
+}
+
 .editor-backdrop {
   position: fixed;
   inset: 0;
@@ -1504,8 +2013,8 @@ onBeforeUnmount(() => {
 }
 
 .editor-modal {
-  width: min(520px, 100%);
-  max-height: min(90vh, 720px);
+  width: min(560px, 100%);
+  max-height: min(90vh, 780px);
   overflow: auto;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -1538,21 +2047,47 @@ onBeforeUnmount(() => {
 
 .editor-body {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 156px 1fr;
   gap: 16px;
+  align-items: stretch;
   padding: 20px;
 }
 
-.editor-body.no-cover {
-  grid-template-columns: 1fr;
+.editor-cover-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  /* Match right column height; overflow scrolls inside cover-grid. */
+  height: 0;
+  min-height: 100%;
+  overflow: hidden;
 }
 
 .editor-cover {
-  width: 96px;
-  height: 96px;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  flex-shrink: 0;
   border-radius: var(--radius-control);
   overflow: hidden;
   background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.editor-cover.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 148px;
+}
+
+.editor-cover-hint {
+  font-size: 11px;
+  text-align: center;
+  padding: 8px;
+  color: var(--color-text-muted);
+  line-height: 1.3;
 }
 
 .editor-cover img {
@@ -1561,11 +2096,179 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 
+.cover-clear {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 18px;
+  line-height: 28px;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.35);
+}
+
+.cover-clear:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.9);
+}
+
+.cover-clear:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cover-picker {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cover-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.cover-picker-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.cover-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: max-content;
+  gap: 8px;
+  flex: 1 1 auto;
+  align-content: start;
+  align-items: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+  min-height: 0;
+  scrollbar-gutter: stable;
+}
+
+.cover-grid::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cover-grid::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-muted) 45%, transparent);
+  border-radius: 999px;
+}
+
+.cover-tile {
+  position: relative;
+  width: 100%;
+  /* padding-bottom square avoids aspect-ratio overlap inside scrollable grids */
+  height: 0;
+  padding-bottom: 100%;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-bg);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
+  cursor: pointer;
+  align-self: start;
+}
+
+.cover-tile img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cover-tile.active {
+  border-color: var(--color-accent);
+}
+
+.cover-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .2);
+}
+
+.cover-tile-clear {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+}
+
+.cover-tile-clear:hover {
+  background: rgba(185, 28, 28, 0.9);
+}
+
+.cover-tile-add {
+  border-style: dashed;
+  box-shadow: none;
+  color: var(--color-text-muted);
+}
+
+.cover-tile-add:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.cover-add-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 300;
+}
+
+.cover-tile:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .editor-fields {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  /* Keep content-sized height so it drives the grid row. */
+  min-height: min-content;
 }
 
 .editor-fields label {
@@ -1577,6 +2280,102 @@ onBeforeUnmount(() => {
 }
 
 .editor-fields input {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.artist-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 28px 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-bg);
+  position: relative;
+}
+
+.artist-chips.disabled {
+  opacity: 0.7;
+}
+
+.artist-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg));
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.artist-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artist-chip-remove {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 16px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.artist-chip-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text) 18%, transparent);
+  color: var(--color-text);
+}
+
+.artist-chip-input {
+  flex: 1 1 72px;
+  min-width: 72px;
+  border: none !important;
+  outline: none;
+  background: transparent !important;
+  padding: 4px 0 !important;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.artist-chips-clear {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 18px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.artist-chips-clear:hover:not(:disabled) {
+  color: var(--color-text);
+}
+
+.album-artist-select {
+  width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
@@ -1688,6 +2487,16 @@ onBeforeUnmount(() => {
 
   .editor-body {
     grid-template-columns: 1fr;
+  }
+
+  .editor-cover-col {
+    height: auto;
+    min-height: 0;
+    max-height: 360px;
+  }
+
+  .cover-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 </style>

@@ -48,17 +48,40 @@ Paths (`/music`, `/data`, `/data/transfer`, `/app/logs`, `/app/web`) and process
 | `SERVER_PORT` | No (default `7526`) | Port inside the container |
 | `DATABASE_TYPE` | No (default empty → sqlite) | `sqlite` or `postgresql` |
 | `DATABASE_URL` | No | Postgres URL, e.g. `postgres://user:pass@host:5432/db?sslmode=prefer` |
+| `APP_VERSION` | No | Version shown in Settings (image bakes git tag at build; override at runtime if needed) |
 | `DEBUG` | No (default `false`) | Verbose logs |
 
 With `DATABASE_TYPE=postgresql`, set `DATABASE_URL`. A `postgres://` / `postgresql://` URL alone is enough to select PostgreSQL.
 
 ## Build & push
 
-```bash
+Pass the version at build time so Settings → Version shows it (default `dev` if omitted):
+
+```powershell
+$env:APP_VERSION = "v0.1.0"
 docker compose build
 docker push zevenz/sonic-verse:latest
 ```
 
+Or from the current git tag:
+
+```powershell
+$env:APP_VERSION = (git describe --tags --always --dirty)
+docker compose build
+docker push zevenz/sonic-verse:latest
+```
+
+```bash
+# bash
+APP_VERSION=v0.1.0 docker compose build
+# or
+APP_VERSION=$(git describe --tags --always --dirty) docker compose build
+docker push zevenz/sonic-verse:latest
+```
+
+Optional runtime override (compose / NAS panel): set `APP_VERSION=v1.2.3`.
+
 ## Source
 
-https://github.com/zevenz/sonic-verse
+https://github.com/zinkiv/sonic-verse
+https://git.zeven.site/zeven/sonic-verse

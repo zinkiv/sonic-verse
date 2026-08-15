@@ -26,11 +26,16 @@ COPY --from=frontend-builder /app/frontend/dist /app/web
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
+# Bake git tag / describe into the image (settings page + /health).
+ARG APP_VERSION=dev
+RUN printf '%s\n' "$APP_VERSION" > /app/VERSION
+
 # Only user-facing knobs here (NAS / Container Manager will list these).
 # Paths are fixed inside entrypoint, not exposed as image ENV.
 ENV SERVER_PORT=7526 \
     DATABASE_TYPE= \
     DATABASE_URL= \
+    APP_VERSION=${APP_VERSION} \
     PYTHONUNBUFFERED=1
 
 RUN mkdir -p /app/logs /data/transfer /data/database /data/covers /data/library

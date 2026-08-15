@@ -43,8 +43,9 @@ async def import_track_to_library(
     *,
     artist: str,
     title: str,
+    filename: str | None = None,
 ) -> Path | None:
-    """Rename to ``歌手名-歌曲名`` and move into the music library.
+    """Rename to ``歌手名-歌曲名`` (or custom ``filename``) and move into the library.
 
     Files still in /transfer are imported (and the transfer copy is removed).
     An existing file at the destination is overwritten (no `` (2)`` suffix).
@@ -57,7 +58,10 @@ async def import_track_to_library(
 
     organizer = FileOrganizer()
     metadata = AudioMetadata(title=title, artist=artist)
-    destination = organizer.get_destination_path(metadata, source)
+    if filename and filename.strip():
+        destination = organizer.get_destination_path_for_filename(filename, source)
+    else:
+        destination = organizer.get_destination_path(metadata, source)
     await _remove_conflicting_tracks(session, track, destination)
 
     moved = organizer.organize_file(

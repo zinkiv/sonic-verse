@@ -29,10 +29,7 @@ const countLabel = computed(() =>
   t(COUNT_LABEL[store.currentSubTab], { count: store.total }, store.total)
 )
 
-type ConfirmState =
-  | { kind: 'album'; album: Album }
-  | { kind: 'track'; track: Track }
-  | null
+type ConfirmState = { track: Track } | null
 
 const confirm = ref<ConfirmState>(null)
 const deleting = ref(false)
@@ -42,24 +39,15 @@ const artistMatchError = ref<string | null>(null)
 const matchingTrackId = ref<string | null>(null)
 const matchError = ref<string | null>(null)
 
-const confirmTitle = computed(() => {
-  if (!confirm.value) return ''
-  return confirm.value.kind === 'album'
-    ? t('library.deleteAlbum')
-    : t('library.deleteTrack')
-})
+const confirmTitle = computed(() =>
+  confirm.value ? t('library.deleteTrack') : ''
+)
 
-const confirmMessage = computed(() => {
-  if (!confirm.value) return ''
-  if (confirm.value.kind === 'album') {
-    const album = confirm.value.album
-    return t('library.deleteAlbumConfirm', {
-      title: album.title,
-      count: album.track_count ?? 0,
-    })
-  }
-  return t('library.deleteTrackConfirm', { title: confirm.value.track.title })
-})
+const confirmMessage = computed(() =>
+  confirm.value
+    ? t('library.deleteTrackConfirm', { title: confirm.value.track.title })
+    : ''
+)
 
 // The first and last page are always shown; the window slides around the
 // current page so the control stays a fixed width on large libraries.
@@ -88,16 +76,9 @@ function formatDuration(ms: number | null): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-function openDeleteAlbum(album: Album, event: Event) {
-  event.preventDefault()
-  event.stopPropagation()
-  deleteError.value = null
-  confirm.value = { kind: 'album', album }
-}
-
 function openDeleteTrack(track: Track) {
   deleteError.value = null
-  confirm.value = { kind: 'track', track }
+  confirm.value = { track }
 }
 
 function closeConfirm() {
@@ -111,11 +92,7 @@ async function confirmDelete() {
   deleting.value = true
   deleteError.value = null
   try {
-    if (confirm.value.kind === 'album') {
-      await store.deleteAlbum(confirm.value.album.id)
-    } else {
-      await store.deleteTrack(confirm.value.track.id)
-    }
+    await store.deleteTrack(confirm.value.track.id)
     confirm.value = null
   } catch (err) {
     deleteError.value = err instanceof Error ? err.message : t('library.deleteFailed')
@@ -277,20 +254,6 @@ onBeforeUnmount(() => {
             :alt="album.title"
           />
           <div v-else class="cover-placeholder">♪</div>
-          <button
-            type="button"
-            class="album-delete"
-            :title="t('library.deleteAlbum')"
-            :aria-label="t('library.deleteAlbum')"
-            @click="openDeleteAlbum(album, $event)"
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9zm-1 12h12a1 1 0 0 0 1-1V8H5v12a1 1 0 0 0 1 1z"
-              />
-            </svg>
-          </button>
         </div>
         <div class="album-meta">
           <p class="album-title">{{ album.title }}</p>
@@ -695,41 +658,6 @@ onBeforeUnmount(() => {
 .cover-placeholder {
   font-size: 32px;
   color: var(--color-text-muted);
-}
-
-.album-delete {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 8px;
-  background: rgba(15, 23, 42, .62);
-  color: #fff;
-  opacity: 0;
-  transform: translateY(4px);
-  transition: all var(--motion-duration) var(--motion-ease);
-}
-
-.album-card:hover .album-delete,
-.album-delete:focus-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-@media (hover: none) {
-  .album-delete {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.album-delete:hover {
-  background: #dc2626;
 }
 
 .album-meta {

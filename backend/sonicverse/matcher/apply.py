@@ -31,9 +31,10 @@ LOCAL_CONFIRMED_MBID = "local-confirmed"
 class ApplyError(Exception):
     """Raised when apply cannot persist tags; session is rolled back."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, *, status_code: int = 500):
         super().__init__(message)
         self.message = message
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -45,10 +46,13 @@ class ApplyPayload:
     album: str
     mbid: str
     album_mbid: str | None = None
+    album_artist: str | None = None
+    filename: str | None = None
     year: int | None = None
     duration: int | None = None  # seconds
     fetch_cover: bool = True
     cover_url: str | None = None
+    clear_cover: bool = False
     artist_image_url: str | None = None
     artist_images: tuple[dict[str, str], ...] | None = None
     force_artist_images: bool = False
@@ -277,6 +281,18 @@ async def _save_cover(album: Album, cover_data: bytes) -> None:
         logger.warning("Failed to save cover for album %s", album.id, exc_info=True)
 
 
+async def _clear_album_cover(album: Album) -> None:
+    cover_path = album.cover_path
+    album.cover_path = None
+    if cover_path and cover_path.startswith("/covers/"):
+        try:
+            cover_file = Path(cover_path.split("?", 1)[0]).name
+            file_path = Path(settings.covers_path) / cover_file
+            await asyncio.to_thread(file_path.unlink, missing_ok=True)
+        except Exception:
+            logger.warning("Failed to clear cover %s", cover_path, exc_info=True)
+
+
 async def _save_artist_avatar(artist: Artist, image_data: bytes) -> None:
     try:
         ext = _detect_cover_ext(image_data)
@@ -292,8 +308,18 @@ async def _save_artist_avatar(artist: Artist, image_data: bytes) -> None:
 async def _download_image(url: str | None) -> bytes | None:
     if not url:
         return None
+    headers = None
+    lower = url.lower()
+    if "gtimg.cn" in lower or "y.qq.com" in lower:
+        headers = {
+            "Referer": "https://y.qq.com/",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+        }
     try:
-        response = await http_client().get(url)
+        response = await http_client().get(url, headers=headers)
         if response.status_code == 200 and response.content:
             return response.content
     except Exception:
@@ -314,23 +340,80 @@ def _artist_image_map(
     return mapping
 
 
+async def _lookup_artist_image_url(provider_name: str, artist_name: str) -> str | None:
+    """Search the provider for an avatar URL for this artist name."""
+    name = (artist_name or "").strip()
+    if not name or not provider_name:
+        return None
+    try:
+        provider = get_provider(provider_name)
+    except Exception:
+        logger.warning("Unknown provider for artist image lookup: %s", provider_name)
+        return None
+
+    try:
+        direct = await provider.lookup_artist_image(name)
+        if direct:
+            return direct
+    except Exception:
+        logger.warning(
+            "Provider artist lookup failed for %s via %s",
+            name,
+            provider_name,
+            exc_info=True,
+        )
+
+    try:
+        results = await provider.search_track(title="", artist=name)
+    except Exception:
+        logger.warning(
+            "Artist image lookup failed for %s via %s",
+            name,
+            provider_name,
+            exc_info=True,
+        )
+        return None
+
+    target = name.casefold()
+    for result in results:
+        for item in result.artist_images or ():
+            item_name = (item.get("name") or "").strip()
+            url = (item.get("url") or "").strip()
+            if item_name and url and item_name.casefold() == target:
+                return url
+        credited = split_artist_names(result.artist)
+        if len(credited) == 1 and credited[0].casefold() == target:
+            url = (result.artist_image_url or "").strip()
+            if url:
+                return url
+    return None
+
+
 async def _maybe_save_artist_avatars(
     artists: list[Artist],
     *,
     artist_image_url: str | None,
     artist_images: tuple[dict[str, str], ...] | list[dict[str, str]] | None,
     force: bool = False,
+    provider: str | None = None,
 ) -> None:
-    """Fill artist avatars from provider image URLs (best-effort)."""
+    """Fill artist avatars from provider image URLs (best-effort).
+
+    Prefer name match from the candidate payload. When QQ packs many singers
+    into one credit (no per-person URL), look each artist up individually.
+    """
     by_name = _artist_image_map(artist_images, artist_image_url)
+    images = list(artist_images or ())
     for index, artist in enumerate(artists):
         if artist.avatar_path and not force:
             continue
         url = by_name.get(artist.name.casefold())
         if not url and index == 0:
-            url = artist_image_url
-        if not url and index < len(artist_images or ()):
-            url = (artist_images or ())[index].get("url")
+            url = (artist_image_url or "").strip() or None
+        if not url and index < len(images):
+            url = (images[index].get("url") or "").strip() or None
+        if not url and provider:
+            url = await _lookup_artist_image_url(provider, artist.name)
         image = await _download_image(url)
         if image:
             await _save_artist_avatar(artist, image)
@@ -343,6 +426,7 @@ async def refresh_artist_avatars_from_images(
     artist_image_url: str | None,
     artist_images: tuple[dict[str, str], ...] | list[dict[str, str]] | None,
     force: bool = False,
+    provider: str | None = None,
 ) -> None:
     """Update avatars for artists already linked to a track (no tag rewrite)."""
     await session.refresh(track, attribute_names=["artist", "artists"])
@@ -356,6 +440,7 @@ async def refresh_artist_avatars_from_images(
         artist_image_url=artist_image_url,
         artist_images=artist_images,
         force=force,
+        provider=provider,
     )
 
 
@@ -366,6 +451,7 @@ async def refresh_artists_from_candidate(
     artist_image_url: str | None,
     artist_images: tuple[dict[str, str], ...] | list[dict[str, str]] | None,
     force: bool = True,
+    provider: str | None = None,
 ) -> None:
     """Refresh avatars for artists linked to the track or its album."""
     await session.refresh(track, attribute_names=["artist", "artists", "album"])
@@ -391,6 +477,7 @@ async def refresh_artists_from_candidate(
         artist_image_url=artist_image_url,
         artist_images=artist_images,
         force=force,
+        provider=provider,
     )
 
 
@@ -436,6 +523,14 @@ async def apply_match_to_track(
     ``cover_data`` may be pre-downloaded so callers can avoid holding a DB
     connection during cover HTTP.
     """
+    source = Path(track.file_path)
+    if not source.is_file():
+        raise ApplyError(
+            f"音频文件不存在，无法保存：{track.file_path}。"
+            "请确认中转目录里还有该文件；若已改名或删除，请重新上传/扫描后再试。",
+            status_code=400,
+        )
+
     # Prefer downloading cover before touching the session so API callers that
     # have not yet checked out a connection do not hold one during HTTP.
     cover: bytes | None = cover_data
@@ -463,13 +558,18 @@ async def apply_match_to_track(
 
     if cover:
         await _save_cover(album, cover)
+    elif data.clear_cover:
+        await _clear_album_cover(album)
 
-    if data.fetch_cover:
+    # Artist avatars are independent of album cover fetch. QQ group credits often
+    # lack per-person URLs, so always try (payload URLs first, then per-artist lookup).
+    if artists:
         await _maybe_save_artist_avatars(
             artists,
             artist_image_url=data.artist_image_url,
             artist_images=data.artist_images,
             force=data.force_artist_images,
+            provider=data.provider,
         )
 
     track.title = data.title
@@ -496,13 +596,17 @@ async def apply_match_to_track(
     await _purge_empty_albums(session)
 
     artist_label = join_artist_names(data.artist) or data.artist
+    album_artist_label = (
+        join_artist_names(data.album_artist) if data.album_artist else None
+    ) or artist_label
     file_meta = AudioMetadata(
         title=data.title,
         artist=artist_label,
         album=data.album or data.title,
-        album_artist=artist_label,
+        album_artist=album_artist_label,
         year=data.year,
         cover_data=cover,
+        clear_cover=bool(data.clear_cover and not cover),
     )
     written = await asyncio.to_thread(Tagger().write_metadata, track.file_path, file_meta)
     if not written:
@@ -524,4 +628,5 @@ async def apply_match_to_track(
         track,
         artist=artist_label,
         title=data.title,
+        filename=data.filename,
     )

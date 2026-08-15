@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-# Comma, ampersand, slash, or Chinese enumeration comma, with optional spaces.
-_SPLIT_RE = re.compile(r"\s*[,&/、]\s*")
+# Comma, semicolon, ampersand, slash, or Chinese enumeration comma, with optional spaces.
+_SPLIT_RE = re.compile(r"\s*[,;；&/、]\s*")
 
 
 def split_artist_names(raw: str | None) -> list[str]:
@@ -13,6 +13,7 @@ def split_artist_names(raw: str | None) -> list[str]:
 
     ``"Earth, Wind & Fire"`` → ``["Earth", "Wind", "Fire"]``.
     ``"浅影阿 / 汐音社"`` → ``["浅影阿", "汐音社"]``.
+    ``"侯明昊;陈都灵;田嘉瑞"`` → ``["侯明昊", "陈都灵", "田嘉瑞"]``.
     """
     if raw is None:
         return []

@@ -24,9 +24,18 @@ OpenAPI：http://localhost:7526/docs
 
 **NAS：** 镜像 `zevenz/sonic-verse:latest`。`entrypoint.sh` 默认以 uid/gid 1000 运行并校正 `/data` 属主；NAS 面板无需再填 `PUID`/`PGID`。
 
-```bash
+构建时传入版本号（设置页会显示该值；不传则为 `dev`）：
+
+```powershell
+$env:APP_VERSION = "v0.1.0"
 docker compose build
 docker push zevenz/sonic-verse:latest
+```
+
+也可直接：
+
+```bash
+docker build --build-arg APP_VERSION=v0.1.0 -t zevenz/sonic-verse:latest .
 ```
 
 ### 开发模式
@@ -79,6 +88,7 @@ Vite 将 `/api` 与 `/covers` 代理到 `http://localhost:8000`。
 | `DATA_PATH` | `./data` / `/data` | 封面 / DB / library / 中转 |
 | `TRANSFER_PATH` | `./data/transfer` / `/data/transfer` | 中转（固定在 data 下，compose 不配） |
 | `LOGS_PATH` | `./logs` / `/app/logs` | 日志（容器内，不挂卷） |
+| `APP_VERSION` | `dev`（构建未传时） | 设置页版本；构建：`$env:APP_VERSION="v0.1.0"; docker compose build` |
 | `DEBUG` | `false` | 调试模式 |
 
 完整列表见 [docs/DESIGN.md §9](./docs/DESIGN.md#9-配置与环境变量)。
