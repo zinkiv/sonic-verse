@@ -12,7 +12,12 @@ from sqlalchemy import func, or_, select
 
 from sonicverse.core.config import get_settings
 from sonicverse.core.http import http_client
-from sonicverse.core.artists import join_artist_names, split_artist_names
+from sonicverse.core.artists import (
+    join_artist_names,
+    normalize_album_title,
+    normalize_artist_name,
+    split_artist_names,
+)
 from sonicverse.library.file_tags import apply_file_tags
 from sonicverse.library.import_file import import_track_to_library
 from sonicverse.metadata.parser import AudioMetadata, MetadataReader
@@ -62,6 +67,10 @@ class ApplyPayload:
 def _detect_cover_ext(data: bytes) -> str:
     if data.startswith(b"\x89PNG"):
         return ".png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
     return ".jpg"
 
 
@@ -110,10 +119,13 @@ async def _clear_album_mbid(session, mbid: str, keep_album_id: str) -> None:
 
 
 async def _get_or_create_artist_by_name(session, name: str) -> Artist:
-    result = await session.execute(select(Artist).where(Artist.name == name))
-    artist = result.scalar_one_or_none()
+    canonical = normalize_artist_name(name)
+    result = await session.execute(
+        select(Artist).where(Artist.name == canonical).order_by(Artist.id)
+    )
+    artist = result.scalars().first()
     if artist is None:
-        artist = Artist(name=name)
+        artist = Artist(name=canonical)
         session.add(artist)
         await session.flush()
     return artist
@@ -154,6 +166,15 @@ async def _overwrite_artists(session, track: Track, raw_name: str) -> list[Artis
                 other_albums_q = other_albums_q.where(Album.id != track.album_id)
             other_albums = int(await session.scalar(other_albums_q) or 0)
             if other_tracks == 0 and credit_others == 0 and other_albums == 0:
+                existing = await session.execute(
+                    select(Artist)
+                    .where(Artist.name == names[0], Artist.id != current.id)
+                    .order_by(Artist.id)
+                )
+                sibling = existing.scalars().first()
+                if sibling is not None:
+                    track.artists = [sibling]
+                    return [sibling]
                 current.name = names[0]
                 track.artists = [current]
                 return [current]
@@ -171,6 +192,7 @@ async def _overwrite_album(
     year: int | None,
     mbid: str | None,
 ) -> Album:
+    title = normalize_album_title(title) or (title or "").strip()
     # Prefer the album that already owns this provider album id (unique mbid).
     if mbid:
         result = await session.execute(select(Album).where(Album.mbid == mbid))
@@ -190,6 +212,23 @@ async def _overwrite_album(
                 session, current.id, exclude_track_id=track.id
             )
             if siblings == 0:
+                existing = await session.execute(
+                    select(Album)
+                    .where(
+                        Album.title == title,
+                        Album.artist_id == artist.id,
+                        Album.id != current.id,
+                    )
+                    .order_by(Album.id)
+                )
+                sibling = existing.scalars().first()
+                if sibling is not None:
+                    if year is not None:
+                        sibling.year = year
+                    if mbid:
+                        await _clear_album_mbid(session, mbid, sibling.id)
+                        sibling.mbid = mbid
+                    return sibling
                 current.title = title
                 current.artist_id = artist.id
                 if year is not None:
@@ -199,9 +238,11 @@ async def _overwrite_album(
                 return current
 
     result = await session.execute(
-        select(Album).where(Album.title == title, Album.artist_id == artist.id)
+        select(Album)
+        .where(Album.title == title, Album.artist_id == artist.id)
+        .order_by(Album.id)
     )
-    album = result.scalar_one_or_none()
+    album = result.scalars().first()
     if album is None:
         album = Album(title=title, artist_id=artist.id, year=year, mbid=mbid)
         session.add(album)

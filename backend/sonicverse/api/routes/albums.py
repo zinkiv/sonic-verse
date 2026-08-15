@@ -6,6 +6,7 @@ from sqlalchemy import select, func
 from sonicverse.api.dependencies import DbSession, Pagination
 from sonicverse.core.paths import music_file_path_filter
 from sonicverse.library.delete import NotFoundError, delete_album
+from sonicverse.library.normalize_artists import heal_library_rows
 from sonicverse.models import Album, Track
 from sonicverse.schemas import AlbumResponse, AlbumDetailResponse, AlbumListResponse, AlbumUpdate
 
@@ -36,6 +37,7 @@ async def list_albums(
     search: str | None = Query(None, description="Search in title"),
 ) -> AlbumListResponse:
     """List albums that have at least one track in the /music library."""
+    await heal_library_rows(db)
     library_album_ids = (
         select(Track.album_id.label("album_id"))
         .where(Track.album_id.is_not(None), music_file_path_filter())

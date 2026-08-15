@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useLibraryStore, type SubTab } from '@/stores/library'
-import { api, type Album, type Artist, type MatchCandidatesResponse, type Track } from '@/api'
+import { api, type Album, type Artist, type ArtistImageCandidate, type MatchCandidatesResponse, type Track } from '@/api'
 import { coverSrc } from '@/utils/cover'
 import { formatArtistName, trackArtistLabel } from '@/utils/artists'
 
@@ -31,6 +31,9 @@ const countLabel = computed(() =>
 
 type ConfirmState = { track: Track } | null
 
+const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
+const UPLOAD_ID = '__upload__'
+
 const confirm = ref<ConfirmState>(null)
 const deleting = ref(false)
 const deleteError = ref<string | null>(null)
@@ -38,6 +41,16 @@ const matchingArtistId = ref<string | null>(null)
 const artistMatchError = ref<string | null>(null)
 const matchingTrackId = ref<string | null>(null)
 const matchError = ref<string | null>(null)
+
+const pickerArtist = ref<Artist | null>(null)
+const pickerCandidates = ref<ArtistImageCandidate[]>([])
+const pickerSelectedId = ref<string | null>(null)
+const pickerUploadFile = ref<File | null>(null)
+const pickerUploadUrl = ref<string | null>(null)
+const pickerLoading = ref(false)
+const pickerApplying = ref(false)
+const pickerError = ref<string | null>(null)
+const pickerInput = ref<HTMLInputElement | null>(null)
 
 const confirmTitle = computed(() =>
   confirm.value ? t('library.deleteTrack') : ''
@@ -134,18 +147,108 @@ function openArtistTracks(artist: Artist) {
 async function matchArtistMeta(artist: Artist, event: Event) {
   event.preventDefault()
   event.stopPropagation()
-  if (matchingArtistId.value) return
+  if (matchingArtistId.value || pickerApplying.value) return
 
   matchingArtistId.value = artist.id
   artistMatchError.value = null
+  pickerArtist.value = artist
+  pickerCandidates.value = []
+  pickerSelectedId.value = null
+  pickerUploadFile.value = null
+  if (pickerUploadUrl.value) URL.revokeObjectURL(pickerUploadUrl.value)
+  pickerUploadUrl.value = null
+  pickerError.value = null
+  pickerLoading.value = true
   try {
-    await store.matchArtist(artist.id)
+    const data = await store.searchArtistMatch(artist.id)
+    pickerCandidates.value = data.candidates
+    if (data.candidates[0]) {
+      pickerSelectedId.value = data.candidates[0].url
+    }
   } catch (err) {
-    artistMatchError.value =
+    pickerError.value =
       err instanceof Error ? err.message : t('library.matchArtistFailed')
   } finally {
     matchingArtistId.value = null
+    pickerLoading.value = false
   }
+}
+
+function closeArtistPicker() {
+  if (pickerApplying.value) return
+  pickerArtist.value = null
+  pickerCandidates.value = []
+  pickerSelectedId.value = null
+  pickerUploadFile.value = null
+  if (pickerUploadUrl.value) {
+    URL.revokeObjectURL(pickerUploadUrl.value)
+    pickerUploadUrl.value = null
+  }
+  pickerError.value = null
+  pickerLoading.value = false
+}
+
+function dropBrokenCandidate(url: string) {
+  pickerCandidates.value = pickerCandidates.value.filter((item) => item.url !== url)
+  if (pickerSelectedId.value !== url) return
+  pickerSelectedId.value =
+    pickerCandidates.value[0]?.url
+    ?? (pickerUploadUrl.value ? UPLOAD_ID : null)
+}
+
+function pickArtistImage() {
+  pickerInput.value?.click()
+}
+
+function onArtistImagePicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !file.type.startsWith('image/')) return
+  pickerUploadFile.value = file
+  if (pickerUploadUrl.value) URL.revokeObjectURL(pickerUploadUrl.value)
+  pickerUploadUrl.value = URL.createObjectURL(file)
+  pickerSelectedId.value = UPLOAD_ID
+  pickerError.value = null
+}
+
+async function applyArtistPicker() {
+  const artist = pickerArtist.value
+  if (!artist || pickerApplying.value) return
+  if (pickerSelectedId.value === UPLOAD_ID && pickerUploadFile.value) {
+    pickerApplying.value = true
+    pickerError.value = null
+    try {
+      await store.applyArtistAvatar(artist.id, { file: pickerUploadFile.value })
+      closeArtistPickerAfterSave()
+    } catch (err) {
+      pickerError.value =
+        err instanceof Error ? err.message : t('library.matchArtistFailed')
+    } finally {
+      pickerApplying.value = false
+    }
+    return
+  }
+  if (pickerSelectedId.value && pickerSelectedId.value !== UPLOAD_ID) {
+    pickerApplying.value = true
+    pickerError.value = null
+    try {
+      await store.applyArtistAvatar(artist.id, { imageUrl: pickerSelectedId.value })
+      closeArtistPickerAfterSave()
+    } catch (err) {
+      pickerError.value =
+        err instanceof Error ? err.message : t('library.matchArtistFailed')
+    } finally {
+      pickerApplying.value = false
+    }
+    return
+  }
+  pickerError.value = t('library.artistMatchNoSelection')
+}
+
+function closeArtistPickerAfterSave() {
+  pickerApplying.value = false
+  closeArtistPicker()
 }
 
 const filterBanner = computed(() => {
@@ -195,6 +298,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   loadMoreObserver?.disconnect()
   loadMoreObserver = null
+  if (pickerUploadUrl.value) URL.revokeObjectURL(pickerUploadUrl.value)
 })
 </script>
 
@@ -238,7 +342,7 @@ onBeforeUnmount(() => {
     <!-- Albums Grid -->
     <div v-if="store.currentSubTab === 'albums'" class="grid">
       <div
-        v-for="album in store.albums"
+        v-for="(album, index) in store.albums"
         :key="album.id"
         class="album-card"
         role="button"
@@ -252,6 +356,8 @@ onBeforeUnmount(() => {
             v-if="album.cover_path"
             :src="coverSrc(album.cover_path, album.updated_at)"
             :alt="album.title"
+            :loading="index < 12 ? 'eager' : 'lazy'"
+            decoding="async"
           />
           <div v-else class="cover-placeholder">♪</div>
         </div>
@@ -274,7 +380,7 @@ onBeforeUnmount(() => {
     <div v-if="store.currentSubTab === 'artists'" class="artist-grid">
       <p v-if="artistMatchError" class="artist-match-error">{{ artistMatchError }}</p>
       <button
-        v-for="artist in store.artists"
+        v-for="(artist, index) in store.artists"
         :key="artist.id"
         type="button"
         class="artist-card"
@@ -286,6 +392,8 @@ onBeforeUnmount(() => {
               v-if="artist.avatar_path"
               :src="coverSrc(artist.avatar_path, artist.updated_at)"
               :alt="artist.name"
+              :loading="index < 12 ? 'eager' : 'lazy'"
+              decoding="async"
             />
             <div v-else class="avatar-placeholder">{{ artist.name?.charAt(0) }}</div>
           </div>
@@ -336,6 +444,8 @@ onBeforeUnmount(() => {
               v-if="track.album?.cover_path"
               :src="coverSrc(track.album?.cover_path, track.updated_at)"
               :alt="track.title"
+              :loading="index < 8 ? 'eager' : 'lazy'"
+              decoding="async"
             />
             <div v-else class="thumb-placeholder">♪</div>
           </div>
@@ -458,6 +568,101 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <div
+      v-if="pickerArtist"
+      class="confirm-backdrop"
+      @click.self="closeArtistPicker"
+    >
+      <div class="picker-modal" role="dialog" aria-modal="true">
+        <div class="confirm-header">
+          <h3>{{ t('library.artistMatchTitle') }} · {{ pickerArtist.name }}</h3>
+          <button
+            type="button"
+            class="confirm-close"
+            :disabled="pickerApplying"
+            @click="closeArtistPicker"
+          >
+            ×
+          </button>
+        </div>
+        <div class="picker-body">
+          <p v-if="pickerLoading" class="picker-status">{{ t('library.matchingArtist') }}</p>
+          <p
+            v-else-if="!pickerCandidates.length && !pickerUploadUrl"
+            class="picker-status"
+          >
+            {{ t('library.artistMatchEmpty') }}
+          </p>
+          <div class="picker-grid">
+            <button
+              v-for="candidate in pickerCandidates"
+              :key="candidate.url"
+              type="button"
+              class="picker-tile"
+              :class="{ active: pickerSelectedId === candidate.url }"
+              :disabled="pickerApplying || pickerLoading"
+              :title="candidate.name"
+              @click="pickerSelectedId = candidate.url"
+            >
+              <img
+                :src="candidate.url"
+                alt=""
+                referrerpolicy="no-referrer"
+                @error="dropBrokenCandidate(candidate.url)"
+              />
+              <span class="picker-tile-name">{{ candidate.name }}</span>
+            </button>
+            <button
+              v-if="pickerUploadUrl"
+              type="button"
+              class="picker-tile"
+              :class="{ active: pickerSelectedId === UPLOAD_ID }"
+              :disabled="pickerApplying"
+              :title="t('library.artistMatchUpload')"
+              @click="pickerSelectedId = UPLOAD_ID"
+            >
+              <img :src="pickerUploadUrl" alt="" />
+            </button>
+            <button
+              type="button"
+              class="picker-tile picker-tile-add"
+              :disabled="pickerApplying"
+              :title="t('library.artistMatchUpload')"
+              @click="pickArtistImage"
+            >
+              <span class="picker-add-icon" aria-hidden="true">+</span>
+            </button>
+          </div>
+          <p v-if="pickerError" class="confirm-error">{{ pickerError }}</p>
+        </div>
+        <div class="confirm-footer">
+          <button
+            type="button"
+            class="ghost-btn"
+            :disabled="pickerApplying"
+            @click="closeArtistPicker"
+          >
+            {{ t('library.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="primary-btn"
+            :disabled="pickerApplying"
+            @click="applyArtistPicker"
+          >
+            {{ pickerApplying ? t('library.artistMatchApplying') : t('library.artistMatchApply') }}
+          </button>
+        </div>
+      </div>
+    </div>
+    <input
+      ref="pickerInput"
+      type="file"
+      class="hidden-file"
+      :accept="IMAGE_ACCEPT"
+      @change="onArtistImagePicked"
+    />
   </div>
 </template>
 
@@ -1024,7 +1229,121 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.primary-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-control);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 13px;
+}
+
+.primary-btn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.hidden-file {
+  display: none;
+}
+
+.picker-modal {
+  width: min(640px, 100%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .18);
+}
+
+.picker-body {
+  padding: 16px 20px;
+}
+
+.picker-status {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.picker-tile {
+  position: relative;
+  width: 100%;
+  height: 0;
+  padding-bottom: 100%;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-bg);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .08);
+}
+
+.picker-tile img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.picker-tile.active {
+  border-color: var(--color-accent);
+}
+
+.picker-tile-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(15, 23, 42, .72));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picker-tile-add {
+  border-style: dashed;
+  border-color: var(--color-border);
+  box-shadow: none;
+  color: var(--color-text-muted);
+}
+
+.picker-tile-add:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.picker-add-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.picker-tile:disabled {
+  cursor: not-allowed;
+}
+
 @media (max-width: 720px) {
+  .picker-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .track-header,
   .track-row {
     grid-template-columns: 36px 1fr 110px;

@@ -4,6 +4,7 @@ import {
   api,
   type Album,
   type Artist,
+  type ArtistMatchResponse,
   type MusicSyncResponse,
   type PaginatedResponse,
   type ScanJob,
@@ -132,7 +133,9 @@ export const useLibraryStore = defineStore('library', () => {
     page.value = 1
     total.value = 0
     totalPages.value = 0
-    await Promise.all([fetchStats(), fetchList(1)])
+    // Paint the grid without waiting on /stats (transfer-tag backfill + counts).
+    await fetchList(1)
+    void fetchStats()
   }
 
   async function pollMusicSync(jobId: string, seq: number) {
@@ -314,12 +317,25 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function matchArtist(artistId: string, provider = 'qqmusic') {
-    const updated = await api.post<Artist>(
+  async function searchArtistMatch(artistId: string, provider = 'qqmusic') {
+    return api.post<ArtistMatchResponse>(
       `/artists/${artistId}/match`,
       undefined,
       { provider },
     )
+  }
+
+  async function applyArtistAvatar(
+    artistId: string,
+    payload: { imageUrl?: string; file?: File },
+  ) {
+    const form = new FormData()
+    if (payload.file) {
+      form.append('image', payload.file)
+    } else if (payload.imageUrl) {
+      form.append('image_url', payload.imageUrl)
+    }
+    const updated = await api.upload<Artist>(`/artists/${artistId}/avatar`, form)
     const index = artists.value.findIndex((artist) => artist.id === artistId)
     if (index >= 0) {
       artists.value[index] = updated
@@ -367,6 +383,7 @@ export const useLibraryStore = defineStore('library', () => {
     clearTrackFilter,
     deleteAlbum,
     deleteTrack,
-    matchArtist,
+    searchArtistMatch,
+    applyArtistAvatar,
   }
 })

@@ -26,13 +26,15 @@ os.environ["TRANSFER_PATH"] = str(_TRANSFER)
 os.environ["DATA_PATH"] = str(_DATA)
 os.environ["LOGS_PATH"] = str(_LOGS)
 os.environ["MATCH_CONFIDENCE_THRESHOLD"] = "1.0"
+os.environ["AUTH_SECRET"] = "test-auth-secret"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 
 from sonicverse.core.database import Base, async_session_maker, engine  # noqa: E402
+from sonicverse.core.auth import AuthUser, hash_password, issue_token  # noqa: E402
 from sonicverse.main import app  # noqa: E402
-from sonicverse.models import Album, Artist, Track  # noqa: E402
+from sonicverse.models import Album, Artist, Track, User  # noqa: E402
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -75,9 +77,30 @@ async def session(clean_db):
 
 
 @pytest.fixture
-async def client(clean_db):
-    # ASGITransport does not run lifespan events, so the app's startup hooks
-    # stay out of the way; clean_db owns schema creation instead.
+async def client(session):
+    admin = User(
+        username="admin",
+        password_hash=hash_password("admin123"),
+        role="admin",
+        disabled=False,
+    )
+    session.add(admin)
+    await session.commit()
+    await session.refresh(admin)
+    token = issue_token(
+        AuthUser(id=admin.id, username=admin.username, role=admin.role, disabled=False)
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def anon_client(clean_db):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

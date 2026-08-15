@@ -9,6 +9,19 @@ from sonicverse.core.config import get_settings
 
 settings = get_settings()
 
+# NAS / OS sidecars that can double a walk without holding real music.
+_SKIP_DIR_NAMES = {
+    "@eadir",
+    "@recycle",
+    "#recycle",
+    ".@__thumb",
+}
+
+
+def _keep_dir(name: str) -> bool:
+    lowered = name.lower()
+    return not lowered.startswith(".") and lowered not in _SKIP_DIR_NAMES
+
 
 class AudioScanner:
     """Scans directories for audio files."""
@@ -23,17 +36,20 @@ class AudioScanner:
 
     def scan(self) -> Generator[Path, None, None]:
         """Scan directory for audio files."""
-        if not self.root_path.exists():
+        try:
+            root = self.root_path.resolve()
+        except OSError:
+            root = self.root_path
+        if not root.exists():
             return
 
-        for dirpath, _, filenames in os.walk(self.root_path):
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames[:] = [name for name in dirnames if _keep_dir(name)]
             for filename in filenames:
-                file_path = Path(dirpath) / filename
-                if file_path.suffix.lower() in self.extensions:
-                    try:
-                        yield file_path.resolve()
-                    except OSError:
-                        yield file_path
+                suffix = os.path.splitext(filename)[1].lower()
+                if suffix not in self.extensions:
+                    continue
+                yield Path(dirpath) / filename
 
     def collect(self) -> list[Path]:
         """Collect every audio file in a single traversal.

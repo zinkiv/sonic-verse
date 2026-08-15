@@ -9,13 +9,25 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from sonicverse.core.config import get_settings
 from sonicverse.core.database import init_db
 from sonicverse.core.http import close_http_client
 from sonicverse.matcher.batch import reset_interrupted_match_jobs
 from sonicverse.scanner.pipeline import reset_interrupted_jobs
-from sonicverse.api.routes import tracks, albums, artists, scanner, settings as settings_routes, stats, matcher, upload
+from sonicverse.api.middleware import AuthGateMiddleware
+from sonicverse.api.routes import (
+    albums,
+    artists,
+    auth as auth_routes,
+    matcher,
+    scanner,
+    settings as settings_routes,
+    stats,
+    tracks,
+    upload,
+)
 
 settings = get_settings()
 
@@ -74,7 +86,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
+# CORS then auth gate (added last = runs first).
+app.add_middleware(AuthGateMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -83,11 +96,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class CachedStaticFiles(StaticFiles):
+    """Cover files are versioned with ``?v=``; let the browser keep them."""
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers.setdefault(
+                "Cache-Control", "public, max-age=31536000, immutable"
+            )
+        return response
+
+
 # Serve cached cover images.
-app.mount("/covers", StaticFiles(directory=settings.covers_path), name="covers")
+app.mount("/covers", CachedStaticFiles(directory=settings.covers_path), name="covers")
 
 # Include routers
 api_prefix = settings.api_prefix
+app.include_router(auth_routes.router, prefix=api_prefix)
 app.include_router(tracks.router, prefix=api_prefix)
 app.include_router(matcher.router, prefix=api_prefix)
 app.include_router(matcher.jobs_router, prefix=api_prefix)

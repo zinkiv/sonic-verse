@@ -422,11 +422,11 @@ POST /api/v1/tracks/{id}/apply
 
 ## 9. 配置与环境变量
 
-无前缀（见 `core/config.py`）。也可使用 `.env`。Docker 专用项（`SERVER_PORT`）由入口脚本读取，不进入 Settings 模型；进程 uid/gid 由 entrypoint 默认处理，无需在 NAS 面板配置。
+无前缀（见 `core/config.py`）。也可使用 `.env`。Docker 专用项（`SERVER_PORT`、`PUID`、`PGID`）由入口脚本读取，不进入 Settings 模型。
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `DATABASE_URL` | `sqlite+aiosqlite:///./data/database/sonicverse.db` | DB 连接 |
+| `DATABASE_URL` | 空 → 本地 SQLite | 空则 `data_path/database/sonicverse.db`；配置 Postgres URL 则用 PostgreSQL |
 | `MUSIC_PATH` | `./music` | 音乐根目录 |
 | `DATA_PATH` | `./data` | 封面 / DB / library 指纹 / 中转 |
 | `TRANSFER_PATH` | `./data/transfer`（Docker：`/data/transfer`） | 中转目录，写死在 data 下 |
@@ -437,8 +437,11 @@ POST /api/v1/tracks/{id}/apply
 | `MUSICBRAINZ_USER_AGENT` | SonicVerse/0.1.0 … | MB 用（未接线时影响小） |
 | `MATCH_CONFIDENCE_THRESHOLD` | `1.0` | 匹配阈值默认（设置页可覆盖） |
 | `SCAN_BATCH_SIZE` | `100` | 扫描批大小 |
+| `AUTH_SECRET` | 空（首次写入 `data/.auth_secret`） | 登录令牌 HMAC 密钥 |
+| `PUID` | `1000` | 容器进程 uid |
+| `PGID` | `1000` | 容器进程 gid |
 
-运行时限制：无鉴权；settings 只读；上传与扫描限制在 `music_path` 下。
+运行时限制：未登录不能访问业务 API 与封面文件；`/health`、`/auth/status`、`/auth/login`、首次安装创建管理员除外。settings 只读（匹配阈值除外，可 PATCH）；上传与扫描限制在 `music_path` 下。
 
 ---
 
@@ -454,6 +457,7 @@ POST /api/v1/tracks/{id}/apply
 - [x] 文件上传入库
 - [x] 统计与只读设置 API
 - [x] 前端 i18n、主题切换
+- [x] 账号：首次安装创建管理员、登录、管理员增删禁用户
 
 ### 脚手架 / 部分完成
 

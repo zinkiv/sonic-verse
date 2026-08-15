@@ -8,6 +8,7 @@ from sonicverse.models.genre import Genre
 from sonicverse.models.scan_job import ScanJob, ScanJobStatus
 from sonicverse.models.match_job import MatchJob, MatchJobStatus
 from sonicverse.models.provider_result import ProviderResult
+from sonicverse.models.user import User
 
 __all__ = [
     "Artist",
@@ -20,4 +21,5 @@ __all__ = [
     "MatchJob",
     "MatchJobStatus",
     "ProviderResult",
+    "User",
 ]

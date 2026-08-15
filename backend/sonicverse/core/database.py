@@ -187,6 +187,14 @@ def _add_missing_columns(sync_conn) -> None:
         if "tag_has_cover" not in cols:
             sync_conn.execute(text("ALTER TABLE tracks ADD COLUMN tag_has_cover BOOLEAN"))
 
+    if "users" in tables:
+        cols = {c["name"] for c in inspector.get_columns("users")}
+        if "disabled" not in cols:
+            default = "0" if settings.is_sqlite else "FALSE"
+            sync_conn.execute(
+                text(f"ALTER TABLE users ADD COLUMN disabled BOOLEAN NOT NULL DEFAULT {default}")
+            )
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for getting database session.

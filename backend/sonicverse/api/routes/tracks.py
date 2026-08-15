@@ -17,7 +17,7 @@ from sonicverse.core.paths import music_file_path_filter, transfer_file_path_fil
 from sonicverse.library.delete import NotFoundError, delete_track
 from sonicverse.library.file_tags import refresh_missing_file_tags
 from sonicverse.metadata.parser import MetadataReader
-from sonicverse.models import Artist, Track
+from sonicverse.models import Album, Artist, Track
 from sonicverse.models.track_artist import track_artists
 from sonicverse.schemas import TrackDetailResponse, TrackListResponse, TrackUpdate
 
@@ -39,7 +39,7 @@ async def list_tracks(
     pagination: Pagination,
     album_id: str | None = Query(None, description="Filter by album ID"),
     artist_id: str | None = Query(None, description="Filter by artist ID"),
-    search: str | None = Query(None, description="Search in title or artist name"),
+    search: str | None = Query(None, description="Search in title, album, or artist"),
     issue: str | None = Query(
         None,
         description=(
@@ -69,10 +69,19 @@ async def list_tracks(
         count_query = count_query.where(artist_filter)
     if search:
         like = f"%{search}%"
-        join = Track.artist_id == Artist.id
-        condition = or_(Track.title.ilike(like), Artist.name.ilike(like))
-        query = query.outerjoin(Artist, join).where(condition)
-        count_query = count_query.outerjoin(Artist, join).where(condition)
+        matching_artists = select(Artist.id).where(Artist.name.ilike(like))
+        matching_albums = select(Album.id).where(Album.title.ilike(like))
+        credited = select(track_artists.c.track_id).where(
+            track_artists.c.artist_id.in_(matching_artists)
+        )
+        condition = or_(
+            Track.title.ilike(like),
+            Track.album_id.in_(matching_albums),
+            Track.artist_id.in_(matching_artists),
+            Track.id.in_(credited),
+        )
+        query = query.where(condition)
+        count_query = count_query.where(condition)
     if issue == "transfer":
         await refresh_missing_file_tags(db)
         transfer_filter = transfer_file_path_filter()
@@ -156,7 +165,7 @@ async def get_track_cover(
         return Response(
             content=embedded,
             media_type=detect_cover_media_type(embedded),
-            headers={"Cache-Control": "public, max-age=3600"},
+            headers={"Cache-Control": "private, max-age=3600"},
         )
 
     async def _from_album() -> Response | None:
@@ -170,7 +179,7 @@ async def get_track_cover(
             return Response(
                 content=data,
                 media_type=detect_cover_media_type(data),
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers={"Cache-Control": "private, max-age=86400"},
             )
         # Stale DB pointer.
         album.cover_path = None

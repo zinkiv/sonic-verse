@@ -74,3 +74,38 @@ async def test_track_cover_serves_saved_file(client, session, library, tmp_path:
     response = await client.get(f"/api/v1/tracks/{track.id}/cover")
     assert response.status_code == 200
     assert response.content.startswith(b"\x89PNG")
+
+
+async def test_track_cover_file_source_ignores_album_art(client, session, transfer_root: Path):
+    jpeg = (
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        b"\xff\xd9"
+    )
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    audio = transfer_root / "own-cover.flac"
+    audio.write_bytes(b"fLaC")
+
+    settings = get_settings()
+    covers = Path(settings.covers_path)
+    covers.mkdir(parents=True, exist_ok=True)
+    file_name = "album-cover.png"
+    (covers / file_name).write_bytes(png)
+
+    album = Album(title="Shared Album", cover_path=f"/covers/{file_name}")
+    session.add(album)
+    await session.flush()
+    track = Track(title="Own Cover", file_path=str(audio), album_id=album.id)
+    session.add(track)
+    await session.commit()
+
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "sonicverse.api.routes.tracks.MetadataReader.read_cover",
+        return_value=jpeg,
+    ):
+        embedded = await client.get(f"/api/v1/tracks/{track.id}/cover?source=file")
+        album_art = await client.get(f"/api/v1/tracks/{track.id}/cover?source=album")
+
+    assert embedded.status_code == 200
+    assert embedded.content.startswith(b"\xff\xd8")
+    assert album_art.status_code == 200
+    assert album_art.content.startswith(b"\x89PNG")

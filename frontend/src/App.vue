@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useLibraryStore } from './stores/library'
@@ -11,8 +11,8 @@ const libraryStore = useLibraryStore()
 const { t } = useI18n()
 const { mode: themeMode, cycleMode } = useTheme()
 
-// Derive the active page from the current route so direct navigation and
-// browser refreshes keep the tab highlight correct.
+const isAuthPage = computed(() => route.name === 'login' || route.name === 'setup')
+
 const currentPage = computed(() => {
   if (route.name === 'metadata') return 'metadata'
   if (route.name === 'settings') return 'settings'
@@ -57,10 +57,6 @@ watch(searchQuery, (value) => {
 
 onBeforeUnmount(() => clearTimeout(searchTimer))
 
-onMounted(() => {
-  libraryStore.fetchStats()
-})
-
 function switchPage(page: string) {
   if (page === 'library') {
     // Already on library: remount won't run, so sync disk → DB here.
@@ -85,8 +81,7 @@ function switchPage(page: string) {
 
 <template>
   <div id="app-container">
-    <!-- Top Navigation -->
-    <nav class="top-nav">
+    <nav v-if="!isAuthPage" class="top-nav">
       <a href="#" class="brand" @click.prevent="switchPage('library')">
         <span class="brand-mark">♪</span>
         <span>{{ t('app.name') }}</span>

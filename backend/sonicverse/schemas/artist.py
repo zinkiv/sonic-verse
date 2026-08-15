@@ -41,3 +41,19 @@ class ArtistListResponse(PaginatedResponse[ArtistResponse]):
     """Schema for artist list response."""
 
     pass
+
+
+class ArtistImageCandidate(BaseModel):
+    """A provider avatar the user can pick in the match dialog."""
+
+    name: str
+    url: str
+    provider: str
+
+
+class ArtistMatchResponse(BaseModel):
+    """Search-only artist match payload (does not write the avatar)."""
+
+    artist_id: str
+    artist_name: str
+    candidates: list[ArtistImageCandidate]

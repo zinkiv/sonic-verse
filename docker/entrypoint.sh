@@ -1,9 +1,12 @@
 #!/bin/sh
 set -e
 
-# Common typo on NAS panels
+# Common NAS panel typos
 if [ -z "${PGID}" ] && [ -n "${PGUID}" ]; then
   PGID="${PGUID}"
+fi
+if [ -z "${PGID}" ] && [ -n "${GUID}" ]; then
+  PGID="${GUID}"
 fi
 
 PUID="${PUID:-1000}"
@@ -18,25 +21,23 @@ export TRANSFER_PATH=/data/transfer
 export LOGS_PATH=/app/logs
 
 # True when local SQLite under /data/database should be used.
+# Empty DATABASE_URL → sqlite; an explicit sqlite URL → sqlite; otherwise PostgreSQL.
 uses_sqlite_db() {
-  type_lc=$(printf '%s' "${DATABASE_TYPE:-}" | tr '[:upper:]' '[:lower:]')
   url="${DATABASE_URL:-}"
+  if [ -z "${url}" ]; then
+    return 0
+  fi
   case "${url}" in
-    postgres://*|postgresql://*|postgresql+asyncpg://*)
-      return 1
+    *sqlite*)
+      return 0
       ;;
   esac
-  case "${type_lc}" in
-    postgresql|postgres)
-      return 1
-      ;;
-  esac
-  return 0
+  return 1
 }
 
 database_label() {
   if uses_sqlite_db; then
-    echo "${DATABASE_TYPE:-sqlite}"
+    echo "sqlite"
   else
     echo "postgresql"
   fi
@@ -49,7 +50,7 @@ ensure_dirs() {
     "${TRANSFER_PATH}" \
     "${LOGS_PATH}" \
     "${MUSIC_PATH}"
-  # SQLite file lives here; skip when DATABASE_URL/TYPE points at PostgreSQL.
+  # SQLite file lives here; skip when DATABASE_URL points at PostgreSQL.
   if uses_sqlite_db; then
     mkdir -p "${DATA_PATH}/database"
   fi

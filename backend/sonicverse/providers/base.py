@@ -72,3 +72,11 @@ class BaseProvider(ABC):
     async def lookup_artist_image(self, artist_name: str) -> Optional[str]:
         """Optional direct artist-avatar lookup. Default: unsupported."""
         return None
+
+    async def lookup_artist_images(self, artist_name: str) -> list[dict[str, str]]:
+        """Optional artist-avatar candidates. Default: wrap a single lookup."""
+        url = await self.lookup_artist_image(artist_name)
+        name = (artist_name or "").strip()
+        if url and name:
+            return [{"name": name, "url": url}]
+        return []

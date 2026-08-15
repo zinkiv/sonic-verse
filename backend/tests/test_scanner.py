@@ -33,3 +33,14 @@ def test_custom_extensions_narrow_the_search(tmp_path):
 
 def test_missing_root_yields_nothing(tmp_path):
     assert AudioScanner(str(tmp_path / "does-not-exist")).collect() == []
+
+
+def test_collect_skips_synology_sidecar_dirs(tmp_path):
+    (tmp_path / "keep.flac").write_bytes(b"fLaC")
+    sidecar = tmp_path / "@eaDir"
+    sidecar.mkdir()
+    (sidecar / "keep.flac").write_bytes(b"junk")
+
+    found = AudioScanner(str(tmp_path)).collect()
+
+    assert [path.name for path in found] == ["keep.flac"]

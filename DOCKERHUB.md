@@ -14,7 +14,6 @@ services:
     ports:
       - "7526:7526"
     environment:
-      # DATABASE_TYPE: postgresql
       # DATABASE_URL: postgres://user:password@host:5432/sonic_verse?sslmode=prefer
     volumes:
       - /volume1/music:/music
@@ -35,23 +34,25 @@ Open: http://localhost:7526
 | `/music` | Music library |
 | `/data` | SQLite, covers, transfer inbox (`/data/transfer`), library fingerprint, settings |
 
-Do **not** recursively chown a large `/music` tree. On start, `entrypoint.sh` runs as root, `chown`s `/data` to uid/gid **1000**, then drops privileges with `gosu`. Ensure the host user that writes into the mounts can work with that ownership (or override `PUID`/`PGID` only if you know you need to).
+Do **not** recursively chown a large `/music` tree. On start, `entrypoint.sh` runs as root, `chown`s `/data` to `PUID`/`PGID` (default **1000**), then drops privileges with `gosu`. Set these to the owner of the music/data mounts so tag writes succeed.
 
 **Transfer inbox:** after dumping files via SMB as another user, restart once so entrypoint can re-`chown` `/data/transfer`.
 
 ## Environment variables
 
-Paths (`/music`, `/data`, `/data/transfer`, `/app/logs`, `/app/web`) and process uid/gid are handled inside `entrypoint.sh` — they are **not** listed as image ENV for NAS panels.
+Paths (`/music`, `/data`, `/data/transfer`, `/app/logs`, `/app/web`) are handled inside `entrypoint.sh`. `PUID`/`PGID` are image ENV so NAS panels list them.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SERVER_PORT` | No (default `7526`) | Port inside the container |
-| `DATABASE_TYPE` | No (default empty → sqlite) | `sqlite` or `postgresql` |
-| `DATABASE_URL` | No | Postgres URL, e.g. `postgres://user:pass@host:5432/db?sslmode=prefer` |
+| `DATABASE_URL` | No (empty → sqlite) | Postgres URL selects PostgreSQL, e.g. `postgres://user:pass@host:5432/db?sslmode=prefer` |
 | `APP_VERSION` | No | Version shown in Settings (image bakes git tag at build; override at runtime if needed) |
+| `AUTH_SECRET` | No | Login token secret. Empty: persist one under `/data/.auth_secret` |
+| `PUID` | No (default `1000`) | User id the process runs as |
+| `PGID` | No (default `1000`) | Group id the process runs as (`GUID` / `PGUID` also accepted) |
 | `DEBUG` | No (default `false`) | Verbose logs |
 
-With `DATABASE_TYPE=postgresql`, set `DATABASE_URL`. A `postgres://` / `postgresql://` URL alone is enough to select PostgreSQL.
+Leave `DATABASE_URL` empty for local SQLite under `/data/database`. Set a `postgres://` / `postgresql://` URL to use PostgreSQL.
 
 ## Build & push
 

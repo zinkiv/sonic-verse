@@ -58,10 +58,7 @@ class Settings(BaseSettings):
             return value.strip()
         return resolve_app_version()
 
-    # Database: sqlite (default) or postgresql.
-    # Empty database_url always falls back to local SQLite under data_path/database/.
-    # Empty DATABASE_TYPE is treated as sqlite (so image ENV can leave it blank).
-    database_type: DatabaseType = "sqlite"
+    # Database: empty DATABASE_URL → local SQLite; a postgres URL → PostgreSQL.
     database_url: str = ""
 
     # Paths: music library; transfer staging lives under data_path by default.
@@ -89,12 +86,8 @@ class Settings(BaseSettings):
     # Matching (0–100 percent; legacy 0–1 fractions still accepted via clamp)
     match_confidence_threshold: float = 100
 
-    @field_validator("database_type", mode="before")
-    @classmethod
-    def empty_database_type(cls, value: object) -> object:
-        if value is None or (isinstance(value, str) and not value.strip()):
-            return "sqlite"
-        return value
+    # HMAC secret for login tokens. Empty → persist one under data_path/.auth_secret.
+    auth_secret: str = ""
 
     @property
     def covers_path(self) -> str:
@@ -110,46 +103,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def resolve_database(self) -> "Settings":
-        """Resolve effective database_url from type + optional connection string.
-
-        - No connection URL → local SQLite under ``data_path/database/``.
-        - Explicit ``sqlite…`` URL is kept (e.g. tests).
-        - Postgres-looking URL → PostgreSQL via asyncpg (even if type left as sqlite).
-        - ``database_type=postgresql`` requires a Postgres ``database_url``.
-        """
+        """Resolve DATABASE_URL: empty → SQLite; otherwise PostgreSQL (sqlite URLs kept)."""
         raw_url = (self.database_url or "").strip()
-        db_type = (self.database_type or "sqlite").lower()
 
         if not raw_url:
-            if db_type == "postgresql":
-                raise ValueError(
-                    "DATABASE_TYPE=postgresql requires DATABASE_URL "
-                    "(e.g. postgres://user:pass@host:5432/dbname)"
-                )
-            object.__setattr__(self, "database_type", "sqlite")
             object.__setattr__(self, "database_url", self._default_sqlite_url())
             return self
 
         if "sqlite" in raw_url:
-            object.__setattr__(self, "database_type", "sqlite")
             object.__setattr__(self, "database_url", raw_url)
             return self
 
-        looks_postgres = raw_url.startswith(
-            ("postgres://", "postgresql://", "postgresql+asyncpg://")
-        )
-        if looks_postgres or db_type == "postgresql":
-            object.__setattr__(self, "database_type", "postgresql")
-            object.__setattr__(self, "database_url", _normalize_postgres_url(raw_url))
-            return self
-
-        object.__setattr__(self, "database_type", "sqlite")
-        object.__setattr__(self, "database_url", self._default_sqlite_url())
+        object.__setattr__(self, "database_url", _normalize_postgres_url(raw_url))
         return self
 
     @property
+    def database_type(self) -> DatabaseType:
+        return "sqlite" if self.is_sqlite else "postgresql"
+
+    @property
     def is_sqlite(self) -> bool:
-        return self.database_type == "sqlite" or "sqlite" in self.database_url
+        return "sqlite" in self.database_url
 
     @property
     def sqlite_db_path(self) -> Path | None:

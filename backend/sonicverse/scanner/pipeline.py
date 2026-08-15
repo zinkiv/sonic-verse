@@ -6,14 +6,24 @@ from pathlib import Path
 
 from sqlalchemy import select, update
 
+from sonicverse.core.artists import (
+    artist_name_key,
+    normalize_album_title,
+    normalize_artist_name,
+    split_artist_names,
+)
 from sonicverse.core.config import get_settings
-from sonicverse.core.artists import split_artist_names
 from sonicverse.core.covers import cover_file_exists
 from sonicverse.core.database import get_db_context
 from sonicverse.core.paths import is_path_under, music_root, path_matches_configured_root, transfer_root
 from sonicverse.library.delete import clear_library_catalog
 from sonicverse.library.file_tags import apply_file_tags
-from sonicverse.matcher.apply import _delete_orphan_album, _delete_orphan_artist, _purge_empty_albums
+from sonicverse.matcher.apply import (
+    _delete_orphan_album,
+    _delete_orphan_artist,
+    _get_or_create_artist_by_name,
+    _purge_empty_albums,
+)
 from sonicverse.metadata.parser import AudioMetadata, MetadataReader
 from sonicverse.models import Album, Artist, ScanJob, ScanJobStatus, Track
 from sonicverse.scanner.scanner import AudioScanner
@@ -100,18 +110,14 @@ class _LibraryCache:
 
 async def _get_or_create_artist(session, cache: _LibraryCache, name: str) -> Artist:
     """Find an artist by exact name or create it."""
-    cached = cache.artists.get(name)
+    canonical = normalize_artist_name(name)
+    key = artist_name_key(canonical)
+    cached = cache.artists.get(key)
     if cached is not None:
         return cached
 
-    result = await session.execute(select(Artist).where(Artist.name == name))
-    artist = result.scalar_one_or_none()
-    if artist is None:
-        artist = Artist(name=name)
-        session.add(artist)
-        await session.flush()
-
-    cache.artists[name] = artist
+    artist = await _get_or_create_artist_by_name(session, canonical)
+    cache.artists[key] = artist
     return artist
 
 
@@ -129,6 +135,7 @@ async def _get_or_create_album(
     session, cache: _LibraryCache, title: str, artist: Artist | None, year: int | None
 ) -> Album:
     """Find an album by (title, artist) or create it."""
+    title = normalize_album_title(title)
     artist_id = artist.id if artist else None
     key = (title, artist_id)
 
@@ -139,8 +146,8 @@ async def _get_or_create_album(
             query = query.where(Album.artist_id.is_(None))
         else:
             query = query.where(Album.artist_id == artist_id)
-        result = await session.execute(query)
-        album = result.scalar_one_or_none()
+        result = await session.execute(query.order_by(Album.id))
+        album = result.scalars().first()
         if album is None:
             album = Album(title=title, artist_id=artist_id, year=year)
             session.add(album)
@@ -378,10 +385,10 @@ async def _run_scan_job(job_id: str) -> None:
             job.status = ScanJobStatus.CANCELLED.value
             return
 
-        from sonicverse.library.normalize_artists import normalize_combined_artists
+        from sonicverse.library.normalize_artists import heal_library_rows
 
-        # Split any legacy "A, B & C" artist rows before ingesting new files.
-        await normalize_combined_artists(session, commit=False)
+        # Split combined credits and collapse duplicate names/albums before ingest.
+        await heal_library_rows(session, commit=False)
 
         job.status = ScanJobStatus.RUNNING.value
         await session.flush()

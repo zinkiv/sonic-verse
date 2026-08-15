@@ -1,10 +1,20 @@
 """Tests for artist credit splitting and joining."""
 
-from sonicverse.core.artists import join_artist_names, split_artist_names
+from sonicverse.core.artists import (
+    join_artist_names,
+    normalize_artist_name,
+    split_artist_names,
+)
 
 
 def test_split_keeps_single_name():
     assert split_artist_names("周杰伦") == ["周杰伦"]
+
+
+def test_split_does_not_use_chinese_comma():
+    assert split_artist_names("张三，李四") == ["张三，李四"]
+    assert normalize_artist_name("爱，很简单") == "爱，很简单"
+    assert join_artist_names("张三，李四") == "张三，李四"
 
 
 def test_split_on_english_comma_and_ampersand():
@@ -40,3 +50,10 @@ def test_join_uses_english_comma_without_spaces():
     assert join_artist_names("浅影阿 / 汐音社") == "浅影阿,汐音社"
     assert join_artist_names("侯明昊;陈都灵") == "侯明昊,陈都灵"
     assert join_artist_names(None) == ""
+
+
+def test_normalize_strips_compat_and_invisible_chars():
+    assert normalize_artist_name("  倉木麻衣  ") == "倉木麻衣"
+    assert normalize_artist_name("倉木\u200b麻衣") == "倉木麻衣"
+    assert normalize_artist_name("倉木　麻衣") == "倉木 麻衣"
+    assert split_artist_names("倉木麻衣\u200b") == ["倉木麻衣"]

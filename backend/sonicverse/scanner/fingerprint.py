@@ -54,13 +54,16 @@ def _migrate_legacy_fingerprint() -> None:
 
 def compute_directory_fingerprint(root: Path) -> LibraryFingerprint:
     """Hash audio files under ``root`` by relative path, size, and mtime."""
-    scan_root = Path(root)
+    try:
+        scan_root = Path(root).resolve()
+    except OSError:
+        scan_root = Path(root)
     entries: list[str] = []
 
     if scan_root.exists():
         for path in AudioScanner(str(scan_root)).scan():
             try:
-                relative = path.resolve().relative_to(scan_root.resolve()).as_posix()
+                relative = path.relative_to(scan_root).as_posix()
             except ValueError:
                 relative = path.name
             try:

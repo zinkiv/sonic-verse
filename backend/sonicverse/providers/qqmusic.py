@@ -9,6 +9,7 @@ from sonicverse.core.artists import split_artist_names
 from sonicverse.core.http import http_client
 from sonicverse.providers.base import AlbumResult, BaseProvider, TrackResult
 from sonicverse.providers.queries import merge_query_searches
+from sonicverse.providers.year import parse_release_year
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ class QQMusicProvider(BaseProvider):
                 (item["url"] for item in artist_images if item.get("url")),
                 None,
             )
+            album_blob = song.get("album") if isinstance(song.get("album"), dict) else {}
             results.append(
                 TrackResult(
                     title=song_title,
@@ -172,7 +174,13 @@ class QQMusicProvider(BaseProvider):
                     mbid=_encode_id("song", str(songmid)),
                     confidence=self._title_confidence(title_hint, song_title),
                     album_mbid=_encode_id("album", str(albummid)) if albummid else None,
-                    year=None,
+                    year=parse_release_year(
+                        song.get("pubtime"),
+                        song.get("publicTime"),
+                        song.get("time_public"),
+                        song.get("public_time"),
+                        album_blob,
+                    ),
                     cover_url=_qq_cover_url(albummid),
                     artist_image_url=first_avatar,
                     artist_images=artist_images or None,
@@ -221,7 +229,12 @@ class QQMusicProvider(BaseProvider):
                 AlbumResult(
                     title=item.get("albumName") or item.get("name") or "",
                     artist=item.get("singerName") or "",
-                    year=None,
+                    year=parse_release_year(
+                        item.get("publicTime"),
+                        item.get("pubtime"),
+                        item.get("publish_date"),
+                        item.get("time_public"),
+                    ),
                     mbid=_encode_id("album", str(albummid)),
                     cover_url=_qq_cover_url(str(albummid)),
                 )
@@ -243,9 +256,14 @@ class QQMusicProvider(BaseProvider):
 
     async def lookup_artist_image(self, artist_name: str) -> Optional[str]:
         """Resolve a singer avatar via QQ's dedicated singer search (t=1)."""
+        hits = await self.lookup_artist_images(artist_name)
+        return hits[0]["url"] if hits else None
+
+    async def lookup_artist_images(self, artist_name: str) -> list[dict[str, str]]:
+        """Return QQ singer-search avatars, exact name matches first."""
         name = (artist_name or "").strip()
         if not name:
-            return None
+            return []
         try:
             response = await http_client().get(
                 _SEARCH_URL,
@@ -265,11 +283,13 @@ class QQMusicProvider(BaseProvider):
             payload = response.json()
         except Exception:
             logger.warning("QQ Music singer search failed: %s", name, exc_info=True)
-            return None
+            return []
 
         singers = ((payload.get("data") or {}).get("singer") or {}).get("list") or []
         target = name.casefold()
-        fallback: str | None = None
+        exact: list[dict[str, str]] = []
+        close: list[dict[str, str]] = []
+        seen: set[str] = set()
         for singer in singers:
             if not isinstance(singer, dict):
                 continue
@@ -279,19 +299,26 @@ class QQMusicProvider(BaseProvider):
                 or singer.get("title")
                 or ""
             ).strip()
+            if not singer_name:
+                continue
             mid = (
                 singer.get("singerMID")
                 or singer.get("singer_mid")
                 or singer.get("mid")
             )
             url = _qq_artist_url(str(mid) if mid else None)
-            if not url:
+            if not url or url in seen:
                 continue
-            if singer_name.casefold() == target:
-                return url
-            if fallback is None and target in singer_name.casefold():
-                fallback = url
-        return fallback
+            key = singer_name.casefold()
+            if key != target and target not in key:
+                continue
+            seen.add(url)
+            item = {"name": singer_name, "url": url}
+            if key == target:
+                exact.append(item)
+            else:
+                close.append(item)
+        return exact + close
 
     @staticmethod
     def _title_confidence(query: str, result: str) -> float:

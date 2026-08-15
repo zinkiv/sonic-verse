@@ -8,6 +8,7 @@ from typing import Optional
 from sonicverse.core.http import http_client
 from sonicverse.providers.base import AlbumResult, BaseProvider, TrackResult
 from sonicverse.providers.queries import merge_query_searches
+from sonicverse.providers.year import parse_release_year
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,11 @@ class NeteaseProvider(BaseProvider):
                     mbid=_encode_id("song", song_id),
                     confidence=self._title_confidence(title_hint, song_title),
                     album_mbid=_encode_id("album", album_id) if album_id is not None else None,
-                    year=None,
+                    year=parse_release_year(
+                        song.get("publishTime"),
+                        song.get("publish_time"),
+                        album,
+                    ),
                     cover_url=pic_url,
                     artist_image_url=artist_images[0]["url"] if artist_images else None,
                     artist_images=artist_images or None,
@@ -151,7 +156,11 @@ class NeteaseProvider(BaseProvider):
                 AlbumResult(
                     title=item.get("name") or "",
                     artist=artist_obj.get("name") or "",
-                    year=None,
+                    year=parse_release_year(
+                        item.get("publishTime"),
+                        item.get("publish_time"),
+                        item.get("pubTime"),
+                    ),
                     mbid=_encode_id("album", album_id),
                     cover_url=item.get("picUrl"),
                 )

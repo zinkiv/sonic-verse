@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
-# Comma, semicolon, ampersand, slash, or Chinese enumeration comma, with optional spaces.
+# English comma, semicolon, ampersand, slash, or 顿号. Not Chinese comma 「，」.
 _SPLIT_RE = re.compile(r"\s*[,;；&/、]\s*")
+_FULLWIDTH_COMMA = "\uff0c"
+_COMMA_HOLD = "\ue000"
+
+
+def normalize_artist_name(raw: str | None) -> str:
+    """Strip invisible / compatibility junk so the same person is one name."""
+    # NFKC would fold 「，」 into ASCII comma and then split credits wrongly.
+    text = (raw or "").replace(_FULLWIDTH_COMMA, _COMMA_HOLD)
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return re.sub(r"\s+", " ", text).strip().replace(_COMMA_HOLD, _FULLWIDTH_COMMA)
+
+
+def normalize_album_title(raw: str | None) -> str:
+    """Same cleanup as artist names, applied to album titles."""
+    return normalize_artist_name(raw)
+
+
+def artist_name_key(raw: str | None) -> str:
+    """Case-insensitive identity used to merge duplicate artist rows."""
+    return normalize_artist_name(raw).casefold()
 
 
 def split_artist_names(raw: str | None) -> list[str]:
@@ -14,21 +36,23 @@ def split_artist_names(raw: str | None) -> list[str]:
     ``"Earth, Wind & Fire"`` → ``["Earth", "Wind", "Fire"]``.
     ``"浅影阿 / 汐音社"`` → ``["浅影阿", "汐音社"]``.
     ``"侯明昊;陈都灵;田嘉瑞"`` → ``["侯明昊", "陈都灵", "田嘉瑞"]``.
+    Chinese comma 「，」 is part of the name, not a separator.
     """
     if raw is None:
         return []
-    text = raw.strip()
+    text = normalize_artist_name(raw)
     if not text:
         return []
 
-    parts = [part.strip() for part in _SPLIT_RE.split(text) if part.strip()]
+    parts = [normalize_artist_name(part) for part in _SPLIT_RE.split(text)]
+    parts = [part for part in parts if part]
     if not parts:
         return []
 
     names: list[str] = []
     seen: set[str] = set()
     for part in parts:
-        key = part.casefold()
+        key = artist_name_key(part)
         if key in seen:
             continue
         seen.add(key)
@@ -49,10 +73,10 @@ def join_artist_names(
         names: list[str] = []
         seen: set[str] = set()
         for part in raw:
-            text = (part or "").strip()
+            text = normalize_artist_name(part)
             if not text:
                 continue
-            key = text.casefold()
+            key = artist_name_key(text)
             if key in seen:
                 continue
             seen.add(key)

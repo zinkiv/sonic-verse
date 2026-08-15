@@ -30,12 +30,13 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 ARG APP_VERSION=dev
 RUN printf '%s\n' "$APP_VERSION" > /app/VERSION
 
-# Only user-facing knobs here (NAS / Container Manager will list these).
-# Paths are fixed inside entrypoint, not exposed as image ENV.
+# User-facing knobs (NAS / Container Manager lists image ENV).
+# Paths stay fixed inside entrypoint.
 ENV SERVER_PORT=7526 \
-    DATABASE_TYPE= \
     DATABASE_URL= \
     APP_VERSION=${APP_VERSION} \
+    PUID=1000 \
+    PGID=1000 \
     PYTHONUNBUFFERED=1
 
 RUN mkdir -p /app/logs /data/transfer /data/database /data/covers /data/library

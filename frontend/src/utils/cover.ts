@@ -11,7 +11,7 @@ export function coverSrc(
 
 export type TrackCoverSource = 'file' | 'album' | 'auto'
 
-/** Cover endpoint; queue uses `file`, current-match panel uses `album`. */
+/** Cover endpoint. Metadata queue / current track use embedded `file` art. */
 export function trackCoverSrc(
   trackId: string,
   version?: string | number | null,

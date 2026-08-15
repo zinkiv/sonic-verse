@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AccountSettings from '@/components/AccountSettings.vue'
 import { api, type AppSettings, type ScanJob } from '@/api'
 import { SUPPORTED_LOCALES, setLocale, type Locale } from '@/i18n'
 import { useLibraryStore } from '@/stores/library'
@@ -184,6 +185,8 @@ onBeforeUnmount(() => clearPoll())
 <template>
   <div class="settings">
     <h1>{{ t('settings.title') }}</h1>
+
+    <AccountSettings />
 
     <!-- 外观 -->
     <section class="card">

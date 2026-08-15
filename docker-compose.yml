@@ -15,8 +15,10 @@ services:
       - .env
     environment:
       SERVER_PORT: ${SERVER_PORT:-7526}
-      DATABASE_TYPE: ${DATABASE_TYPE:-}
       DATABASE_URL: ${DATABASE_URL:-}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
     volumes:
       - ${MUSIC_DIR:-./music}:/music
       - ${DATA_DIR:-./data}:/data

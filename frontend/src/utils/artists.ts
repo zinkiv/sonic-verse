@@ -1,6 +1,6 @@
 import type { ArtistSummary, Track } from '@/api'
 
-/** Split a credit string on commas, semicolons, ampersands, slashes, or enumeration commas. */
+/** Split credits on English commas, semicolons, ampersands, slashes, or 顿号 — not 「，」. */
 export function splitArtistNames(raw: string | null | undefined): string[] {
   if (!raw?.trim()) return []
   const parts = raw

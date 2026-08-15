@@ -79,6 +79,26 @@ async def test_track_search_matches_artist_name(client, library):
     assert body["total"] == 3
 
 
+async def test_track_search_matches_album_title(client, library):
+    body = (await client.get("/api/v1/tracks", params={"search": "叶惠美"})).json()
+
+    assert body["total"] == 3
+    assert {item["album"]["title"] for item in body["items"]} == {"叶惠美"}
+
+
+async def test_track_search_keeps_album_filter_when_query_is_album_title(client, library):
+    album_id = library["album"].id
+    body = (
+        await client.get(
+            "/api/v1/tracks",
+            params={"search": "叶惠美", "album_id": album_id},
+        )
+    ).json()
+
+    assert body["total"] == 3
+    assert all(item["album"]["id"] == album_id for item in body["items"])
+
+
 async def test_get_unknown_track_returns_404(client, library):
     assert (await client.get("/api/v1/tracks/does-not-exist")).status_code == 404
 

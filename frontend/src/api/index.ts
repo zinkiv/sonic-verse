@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getAuthToken } from '@/api/token'
 
 const axiosInstance = axios.create({
   baseURL: '/api/v1',
@@ -6,6 +7,14 @@ const axiosInstance = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+})
+
+axiosInstance.interceptors.request.use((config) => {
+  const token = getAuthToken()
+  if (token) {
+    config.headers.set('Authorization', `Bearer ${token}`)
+  }
+  return config
 })
 
 // Response interceptor: unwrap data, normalize errors
@@ -52,6 +61,18 @@ export interface Artist {
   avatar_path: string | null
   created_at: string
   updated_at: string | null
+}
+
+export interface ArtistImageCandidate {
+  name: string
+  url: string
+  provider: string
+}
+
+export interface ArtistMatchResponse {
+  artist_id: string
+  artist_name: string
+  candidates: ArtistImageCandidate[]
 }
 
 export interface Album {

@@ -855,9 +855,14 @@ function selectTrack(track: Track) {
   selectedId.value = track.id
 }
 
-function hideBrokenCover(event: Event) {
+function onCoverError(event: Event) {
   const img = event.target as HTMLImageElement | null
   if (img) img.style.display = 'none'
+}
+
+function onCoverLoad(event: Event) {
+  const img = event.target as HTMLImageElement | null
+  if (img) img.style.display = ''
 }
 
 function queueTitle(track: Track): string {
@@ -1034,7 +1039,8 @@ onBeforeUnmount(() => {
                   <img
                     :src="trackCoverSrc(item.id, item.updated_at, 'file')"
                     :alt="queueTitle(item)"
-                    @error="hideBrokenCover"
+                    @error="onCoverError"
+                    @load="onCoverLoad"
                   />
                   <div class="thumb-placeholder">♪</div>
                 </div>
@@ -1142,9 +1148,11 @@ onBeforeUnmount(() => {
             <div class="current-item">
               <div class="current-cover">
                 <img
-                  :src="trackCoverSrc(selectedTrack.id, selectedTrack.updated_at, 'album')"
+                  :key="selectedTrack.id"
+                  :src="trackCoverSrc(selectedTrack.id, selectedTrack.updated_at, 'file')"
                   :alt="selectedTrack.title"
-                  @error="hideBrokenCover"
+                  @error="onCoverError"
+                  @load="onCoverLoad"
                 />
                 <div class="cover-placeholder">♪</div>
               </div>
@@ -1184,7 +1192,8 @@ onBeforeUnmount(() => {
                     :alt="candidate.title"
                     loading="lazy"
                     :referrerpolicy="candidate.origin === 'provider' ? 'no-referrer' : undefined"
-                    @error="hideBrokenCover"
+                    @error="onCoverError"
+                    @load="onCoverLoad"
                   />
                   <div v-else class="cover-placeholder">♪</div>
                 </div>
@@ -1274,7 +1283,8 @@ onBeforeUnmount(() => {
                     :src="option.src"
                     alt=""
                     :referrerpolicy="option.kind === 'match' ? 'no-referrer' : undefined"
-                    @error="hideBrokenCover"
+                    @error="onCoverError"
+                    @load="onCoverLoad"
                   />
                   <span
                     v-if="selectedCoverId === option.id"
