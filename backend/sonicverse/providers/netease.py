@@ -35,6 +35,35 @@ def _decode_song_id(value: str) -> str | None:
     return value or None
 
 
+_DEFAULT_AVATAR_MARKERS = (
+    "109951163799671647",
+    "18686200114669622",
+)
+
+
+def _usable_netease_avatar(item: dict) -> str | None:
+    """Prefer picUrl; drop the stock empty / silhouette placeholders."""
+    for key in ("picUrl", "img1v1Url", "pic_url"):
+        raw = str(item.get(key) or "").strip()
+        if not raw:
+            continue
+        url = raw.split("?", 1)[0]
+        if any(marker in url for marker in _DEFAULT_AVATAR_MARKERS):
+            continue
+        pic_id = item.get("picId") or item.get("pic_id")
+        if key != "picUrl" and pic_id in (0, "0"):
+            continue
+        return url
+    return None
+
+
+def _name_hits_query(target: str, label: str) -> bool:
+    got = (label or "").casefold().strip()
+    if not target or not got:
+        return False
+    return target == got or target in got
+
+
 class NeteaseProvider(BaseProvider):
     """Search NetEase Cloud Music and fetch covers from album artwork URLs."""
 
@@ -193,6 +222,55 @@ class NeteaseProvider(BaseProvider):
         except Exception:
             logger.warning("NetEase cover fetch failed: %s", mbid, exc_info=True)
         return None
+
+    async def lookup_artist_image(self, artist_name: str) -> Optional[str]:
+        hits = await self.lookup_artist_images(artist_name)
+        return hits[0]["url"] if hits else None
+
+    async def lookup_artist_images(self, artist_name: str) -> list[dict[str, str]]:
+        """Singer search (type=100). Skip default silhouette avatars."""
+        name = (artist_name or "").strip()
+        if not name:
+            return []
+        try:
+            response = await http_client().post(
+                _SEARCH_URL,
+                data={"s": name, "type": 100, "limit": 10, "offset": 0},
+                headers=_HEADERS,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            logger.warning("NetEase artist search failed: %s", name, exc_info=True)
+            return []
+
+        artists = ((payload.get("result") or {}).get("artists") or [])
+        target = name.casefold()
+        exact: list[dict[str, str]] = []
+        close: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in artists:
+            if not isinstance(item, dict):
+                continue
+            person = (item.get("name") or "").strip()
+            aliases = [
+                str(alias).strip()
+                for alias in (item.get("alias") or [])
+                if str(alias).strip()
+            ]
+            url = _usable_netease_avatar(item)
+            if not person or not url or url in seen:
+                continue
+            names = [person, *aliases]
+            if not any(_name_hits_query(target, label) for label in names):
+                continue
+            seen.add(url)
+            row = {"name": person, "url": url}
+            if person.casefold() == target or any(alias.casefold() == target for alias in aliases):
+                exact.append(row)
+            else:
+                close.append(row)
+        return exact + close
 
     @staticmethod
     def _title_confidence(query: str, result: str) -> float:

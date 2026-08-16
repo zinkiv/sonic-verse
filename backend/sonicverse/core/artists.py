@@ -5,8 +5,12 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# English comma, semicolon, ampersand, slash, or 顿号. Not Chinese comma 「，」.
-_SPLIT_RE = re.compile(r"\s*[,;；&/、]\s*")
+# Semicolon, slash, 顿号. English comma only when the next name starts.
+# Ampersand stays inside band names like "MYTH & ROID".
+_SPLIT_RE = re.compile(
+    r"\s*[;；/、]\s*"
+    r"|,\s*(?=[A-Z\u4e00-\u9fff])"
+)
 _FULLWIDTH_COMMA = "\uff0c"
 _COMMA_HOLD = "\ue000"
 
@@ -33,10 +37,14 @@ def artist_name_key(raw: str | None) -> str:
 def split_artist_names(raw: str | None) -> list[str]:
     """Split a credit string into individual artist names.
 
-    ``"Earth, Wind & Fire"`` → ``["Earth", "Wind", "Fire"]``.
+    ``"Earth, Wind & Fire"`` → ``["Earth", "Wind & Fire"]``.
+    ``"MYTH & ROID"`` stays one credit.
+    ``"Fear,and Loathing in Las Vegas"`` → ``["Fear,and Loathing in Las Vegas"]``.
     ``"浅影阿 / 汐音社"`` → ``["浅影阿", "汐音社"]``.
     ``"侯明昊;陈都灵;田嘉瑞"`` → ``["侯明昊", "陈都灵", "田嘉瑞"]``.
     Chinese comma 「，」 is part of the name, not a separator.
+    ``&`` is part of the name. An English comma is a separator only when the
+    following token looks like a new name (uppercase Latin or CJK).
     """
     if raw is None:
         return []
@@ -45,7 +53,11 @@ def split_artist_names(raw: str | None) -> list[str]:
         return []
 
     parts = [normalize_artist_name(part) for part in _SPLIT_RE.split(text)]
-    parts = [part for part in parts if part]
+    parts = [
+        part
+        for part in parts
+        if part and not re.fullmatch(r"[\s,;&/、；]+", part)
+    ]
     if not parts:
         return []
 
@@ -67,7 +79,7 @@ def join_artist_names(
 ) -> str:
     """Join artist credits with an English comma (no spaces).
 
-    ``"A / B & C"`` → ``"A,B,C"``.
+    ``"A / B"`` → ``"A,B"``.
     """
     if isinstance(raw, list):
         names: list[str] = []

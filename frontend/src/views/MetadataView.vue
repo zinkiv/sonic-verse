@@ -18,7 +18,7 @@ import {
 } from '@/api'
 import { useLibraryStore } from '@/stores/library'
 import { trackCoverSrc } from '@/utils/cover'
-import { formatArtistName, splitArtistNames, trackArtistLabel } from '@/utils/artists'
+import { parseArtistChipInput, trackArtistLabel } from '@/utils/artists'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -168,8 +168,7 @@ const displayCandidates = computed((): DisplayCandidate[] => {
     const tags = track.file_tags
     const title = (tags?.title || track.title || '').trim()
     const artist = (
-      formatArtistName(tags?.artist) ||
-      tags?.artist ||
+      (tags?.artist || '').trim() ||
       trackArtistLabel(track) ||
       ''
     ).trim()
@@ -567,7 +566,7 @@ function trackExtension(track: Track | null | undefined): string {
 }
 
 function defaultLibraryFilename(artist: string, title: string, ext: string): string {
-  const artistPart = sanitizeFilenamePart(formatArtistName(artist) || artist) || 'Unknown Artist'
+  const artistPart = sanitizeFilenamePart(artist) || 'Unknown Artist'
   const titlePart = sanitizeFilenamePart(title) || 'Unknown Track'
   const suffix = ext.startsWith('.') ? ext : `.${ext}`
   return `${artistPart}-${titlePart}${suffix}`
@@ -617,7 +616,7 @@ function resolveAlbumArtist(): string {
 }
 
 function setEditArtistsFromRaw(raw: string) {
-  editArtists.value = splitArtistNames(raw)
+  editArtists.value = parseArtistChipInput(raw)
   artistDraft.value = ''
   albumArtistChoice.value =
     editArtists.value.length > 1 ? ALBUM_ARTIST_ALL : editArtists.value[0] || ''
@@ -651,8 +650,17 @@ function commitArtistDraft() {
   syncArtistsToForm()
 }
 
+function editArtistChip(index: number) {
+  if (saving.value) return
+  const name = editArtists.value[index]
+  editArtists.value = editArtists.value.filter((_, i) => i !== index)
+  artistDraft.value = name
+  syncArtistsToForm()
+}
+
 function onArtistDraftKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' || event.key === ',') {
+  if (event.isComposing) return
+  if (event.key === 'Enter') {
     event.preventDefault()
     commitArtistDraft()
   } else if (event.key === 'Backspace' && !artistDraft.value && editArtists.value.length) {
@@ -675,7 +683,7 @@ function openCandidate(candidate: DisplayCandidate) {
   coverCleared.value = false
   filenameTouched.value = false
   const fromFile = candidate.origin === 'file'
-  const artist = formatArtistName(candidate.artist) || candidate.artist
+  const artist = (candidate.artist || '').trim()
   const title = candidate.title
   setEditArtistsFromRaw(artist)
   editForm.value = {
@@ -790,6 +798,7 @@ async function saveEditedMetadata() {
     const formData = new FormData()
     formData.append('title', title)
     formData.append('artist', artist)
+    formData.append('artist_names', JSON.stringify(editArtists.value))
     formData.append('album', album || title)
     const albumArtist = resolveAlbumArtist().trim()
     if (albumArtist) {
@@ -1200,7 +1209,7 @@ onBeforeUnmount(() => {
                 <div class="candidate-body">
                   <h6>{{ candidate.title }}</h6>
                   <p>
-                    {{ formatArtistName(candidate.artist) || candidate.artist }}
+                    {{ candidate.artist || t('metadata.unknownArtist') }}
                     <template v-if="candidate.album"> · {{ candidate.album }}</template>
                     <template v-if="candidate.year"> · {{ candidate.year }}</template>
                   </p>
@@ -1344,7 +1353,11 @@ onBeforeUnmount(() => {
                   :key="`${name}-${index}`"
                   class="artist-chip"
                 >
-                  <span class="artist-chip-text">{{ name }}</span>
+                  <span
+                    class="artist-chip-text"
+                    :title="t('metadata.editArtistChip')"
+                    @click="editArtistChip(index)"
+                  >{{ name }}</span>
                   <button
                     type="button"
                     class="artist-chip-remove"
@@ -2332,6 +2345,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .artist-chip-remove {

@@ -317,12 +317,8 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function searchArtistMatch(artistId: string, provider = 'qqmusic') {
-    return api.post<ArtistMatchResponse>(
-      `/artists/${artistId}/match`,
-      undefined,
-      { provider },
-    )
+  async function searchArtistMatch(artistId: string) {
+    return api.post<ArtistMatchResponse>(`/artists/${artistId}/match`)
   }
 
   async function applyArtistAvatar(

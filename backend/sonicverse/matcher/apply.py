@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from sqlalchemy import func, or_, select
 from sonicverse.core.config import get_settings
 from sonicverse.core.http import http_client
 from sonicverse.core.artists import (
+    artist_name_key,
     join_artist_names,
     normalize_album_title,
     normalize_artist_name,
@@ -62,6 +64,7 @@ class ApplyPayload:
     artist_images: tuple[dict[str, str], ...] | None = None
     force_artist_images: bool = False
     provider: str = "netease"
+    artist_names: tuple[str, ...] | None = None
 
 
 def _detect_cover_ext(data: bytes) -> str:
@@ -131,15 +134,38 @@ async def _get_or_create_artist_by_name(session, name: str) -> Artist:
     return artist
 
 
-async def _overwrite_artists(session, track: Track, raw_name: str) -> list[Artist]:
-    """Resolve a credit string into Artist rows and attach them to the track."""
-    names = split_artist_names(raw_name)
-    if not names:
+async def _overwrite_artists(
+    session,
+    track: Track,
+    raw_name: str,
+    *,
+    names: Sequence[str] | None = None,
+) -> list[Artist]:
+    """Resolve credits into Artist rows and attach them to the track.
+
+    ``names`` is used as-is (manual editor chips). Otherwise ``raw_name`` is split.
+    """
+    if names is not None:
+        resolved: list[str] = []
+        seen: set[str] = set()
+        for part in names:
+            text = normalize_artist_name(part)
+            if not text:
+                continue
+            key = artist_name_key(text)
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved.append(text)
+        names_list = resolved
+    else:
+        names_list = split_artist_names(raw_name)
+    if not names_list:
         track.artists = []
         return []
 
     # Single exclusive credit: rename in place so we keep a stable artist id.
-    if len(names) == 1 and track.artist_id:
+    if len(names_list) == 1 and track.artist_id:
         result = await session.execute(select(Artist).where(Artist.id == track.artist_id))
         current = result.scalar_one_or_none()
         if current is not None:
@@ -168,18 +194,18 @@ async def _overwrite_artists(session, track: Track, raw_name: str) -> list[Artis
             if other_tracks == 0 and credit_others == 0 and other_albums == 0:
                 existing = await session.execute(
                     select(Artist)
-                    .where(Artist.name == names[0], Artist.id != current.id)
+                    .where(Artist.name == names_list[0], Artist.id != current.id)
                     .order_by(Artist.id)
                 )
                 sibling = existing.scalars().first()
                 if sibling is not None:
                     track.artists = [sibling]
                     return [sibling]
-                current.name = names[0]
+                current.name = names_list[0]
                 track.artists = [current]
                 return [current]
 
-    artists = [await _get_or_create_artist_by_name(session, name) for name in names]
+    artists = [await _get_or_create_artist_by_name(session, name) for name in names_list]
     track.artists = artists
     return artists
 
@@ -584,7 +610,9 @@ async def apply_match_to_track(
     if track.artist_id:
         old_artist_ids.add(track.artist_id)
 
-    artists = await _overwrite_artists(session, track, data.artist)
+    artists = await _overwrite_artists(
+        session, track, data.artist, names=data.artist_names
+    )
     if not artists:
         raise ApplyError("Matched artist name is empty")
     artist = artists[0]
@@ -636,10 +664,19 @@ async def apply_match_to_track(
         await _delete_orphan_artist(session, old_artist_id)
     await _purge_empty_albums(session)
 
-    artist_label = join_artist_names(data.artist) or data.artist
-    album_artist_label = (
-        join_artist_names(data.album_artist) if data.album_artist else None
-    ) or artist_label
+    artist_label = (
+        join_artist_names(list(data.artist_names))
+        if data.artist_names
+        else (join_artist_names(data.artist) or data.artist)
+    )
+    if data.album_artist:
+        album_artist_label = (
+            data.album_artist.strip()
+            if data.artist_names
+            else (join_artist_names(data.album_artist) or artist_label)
+        ) or artist_label
+    else:
+        album_artist_label = artist_label
     file_meta = AudioMetadata(
         title=data.title,
         artist=artist_label,

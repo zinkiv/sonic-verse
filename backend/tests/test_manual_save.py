@@ -82,6 +82,77 @@ async def test_manual_save_without_cover(
         assert album.cover_path is None
 
 
+async def test_manual_save_keeps_comma_in_artist_name(
+    client, transfer_track, music_root: Path
+):
+    track = transfer_track
+    band = "Fear,and Loathing in Las Vegas"
+
+    with (
+        patch("sonicverse.matcher.apply.Tagger.write_metadata", return_value=True),
+        patch(
+            "sonicverse.matcher.apply.MetadataReader.read",
+            return_value=_Meta("Let Me Hear"),
+        ),
+    ):
+        response = await client.post(
+            f"/api/v1/tracks/{track.id}/manual-save",
+            data={
+                "title": "Let Me Hear",
+                "artist": band,
+                "artist_names": json.dumps([band]),
+                "album": "Feeling of Unity",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    async with async_session_maker() as s:
+        from sonicverse.models import Artist
+
+        row = await s.get(Track, track.id)
+        assert row is not None
+        await s.refresh(row, attribute_names=["artists"])
+        assert [artist.name for artist in row.artists] == [band]
+        primary = await s.get(Artist, row.artist_id)
+        assert primary is not None
+        assert primary.name == band
+
+
+async def test_manual_save_keeps_ampersand_in_artist_name(
+    client, transfer_track, music_root: Path
+):
+    track = transfer_track
+    band = "MYTH & ROID"
+
+    with (
+        patch("sonicverse.matcher.apply.Tagger.write_metadata", return_value=True),
+        patch(
+            "sonicverse.matcher.apply.MetadataReader.read",
+            return_value=_Meta("HYDRA"),
+        ),
+    ):
+        response = await client.post(
+            f"/api/v1/tracks/{track.id}/manual-save",
+            data={
+                "title": "HYDRA",
+                "artist": band,
+                "artist_names": json.dumps([band]),
+                "album": "Overlord II ED",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    async with async_session_maker() as s:
+        from sonicverse.models import Artist
+
+        row = await s.get(Track, track.id)
+        assert row is not None
+        await s.refresh(row, attribute_names=["artist", "artists"])
+        assert [artist.name for artist in row.artists] == [band]
+        assert row.artist is not None
+        assert row.artist.name == band
+
+
 async def test_manual_save_with_cover_upload(
     client, transfer_track, transfer_root: Path, music_root: Path
 ):

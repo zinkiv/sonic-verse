@@ -114,13 +114,17 @@ async def update_artist(
 async def match_artist(
     db: DbSession,
     artist_id: str,
-    provider: ProviderName = Query("qqmusic", description="Metadata provider"),
+    provider: ProviderName | None = Query(
+        None,
+        description="Optional single provider; omit to search QQ Music and NetEase together",
+    ),
 ) -> ArtistMatchResponse:
     """Search provider avatars for the artist. Does not write the avatar."""
-    try:
-        get_provider(provider)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if provider is not None:
+        try:
+            get_provider(provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result = await db.execute(select(Artist).where(Artist.id == artist_id))
     artist = result.scalar_one_or_none()

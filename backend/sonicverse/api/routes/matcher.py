@@ -297,6 +297,7 @@ async def manual_save(
     cover: UploadFile | None = File(None),
     artist_image_url: str | None = Form(None),
     artist_images: str | None = Form(None),
+    artist_names: str | None = Form(None),
 ) -> TrackDetailResponse:
     """Write user-edited tags (optional cover upload) and import into the library."""
     result = await db.execute(select(Track).where(Track.id == track_id))
@@ -386,6 +387,22 @@ async def manual_save(
         if not parsed_artist_images:
             parsed_artist_images = None
 
+    parsed_artist_names: tuple[str, ...] | None = None
+    if artist_names and str(artist_names).strip():
+        try:
+            raw_names = json.loads(artist_names)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400, detail="artist_names must be a JSON array"
+            ) from exc
+        if not isinstance(raw_names, list):
+            raise HTTPException(
+                status_code=400, detail="artist_names must be a JSON array"
+            )
+        cleaned_names = [str(item).strip() for item in raw_names if str(item).strip()]
+        if cleaned_names:
+            parsed_artist_names = tuple(cleaned_names)
+
     clean_artist_image_url = (artist_image_url or "").strip() or None
     if (
         not clean_artist_image_url
@@ -410,6 +427,7 @@ async def manual_save(
         artist_images=tuple(parsed_artist_images) if parsed_artist_images else None,
         force_artist_images=True,
         provider=provider if provider in ("qqmusic", "netease") else "netease",
+        artist_names=parsed_artist_names,
     )
     try:
         await apply_match_to_track(db, track, payload, cover_data=cover_data)

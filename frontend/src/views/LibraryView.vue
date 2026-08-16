@@ -11,6 +11,12 @@ const store = useLibraryStore()
 const router = useRouter()
 const { t } = useI18n()
 
+function providerLabel(name: string | null | undefined): string {
+  if (name === 'qqmusic') return t('metadata.providerQq')
+  if (name === 'netease') return t('metadata.providerNetease')
+  return name || ''
+}
+
 const SUB_TABS: SubTab[] = ['albums', 'artists', 'tracks']
 
 const TAB_LABEL: Record<SubTab, string> = {
@@ -602,7 +608,7 @@ onBeforeUnmount(() => {
               class="picker-tile"
               :class="{ active: pickerSelectedId === candidate.url }"
               :disabled="pickerApplying || pickerLoading"
-              :title="candidate.name"
+              :title="`${candidate.name} · ${providerLabel(candidate.provider)}`"
               @click="pickerSelectedId = candidate.url"
             >
               <img
@@ -611,7 +617,10 @@ onBeforeUnmount(() => {
                 referrerpolicy="no-referrer"
                 @error="dropBrokenCandidate(candidate.url)"
               />
-              <span class="picker-tile-name">{{ candidate.name }}</span>
+              <span class="picker-tile-name">
+                {{ candidate.name }}
+                <em class="picker-tile-provider">{{ providerLabel(candidate.provider) }}</em>
+              </span>
             </button>
             <button
               v-if="pickerUploadUrl"
@@ -1310,6 +1319,13 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.picker-tile-provider {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  opacity: 0.82;
 }
 
 .picker-tile-add {

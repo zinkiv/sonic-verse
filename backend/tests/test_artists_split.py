@@ -18,7 +18,19 @@ def test_split_does_not_use_chinese_comma():
 
 
 def test_split_on_english_comma_and_ampersand():
-    assert split_artist_names("Earth, Wind & Fire") == ["Earth", "Wind", "Fire"]
+    assert split_artist_names("Earth, Wind & Fire") == ["Earth", "Wind & Fire"]
+    assert split_artist_names("周杰伦,费玉清") == ["周杰伦", "费玉清"]
+    assert split_artist_names("MYTH & ROID") == ["MYTH & ROID"]
+    assert split_artist_names("周杰伦 & 费玉清") == ["周杰伦 & 费玉清"]
+
+
+def test_split_keeps_comma_inside_band_name():
+    assert split_artist_names("Fear,and Loathing in Las Vegas") == [
+        "Fear,and Loathing in Las Vegas"
+    ]
+    assert split_artist_names("Fear, and Loathing in Las Vegas") == [
+        "Fear, and Loathing in Las Vegas"
+    ]
 
 
 def test_split_on_slash():
@@ -33,7 +45,7 @@ def test_split_on_semicolon():
 
 
 def test_split_dedupes_case_insensitively():
-    assert split_artist_names("A, a & B") == ["A", "B"]
+    assert split_artist_names("A, a, B") == ["A, a, B"]
 
 
 def test_split_empty_and_none():
@@ -46,7 +58,7 @@ def test_join_uses_english_comma_without_spaces():
     assert join_artist_names("周杰伦") == "周杰伦"
     assert join_artist_names("周杰伦, 费玉清") == "周杰伦,费玉清"
     assert join_artist_names(["周杰伦", "费玉清"]) == "周杰伦,费玉清"
-    assert join_artist_names("周杰伦 & 费玉清") == "周杰伦,费玉清"
+    assert join_artist_names("周杰伦 & 费玉清") == "周杰伦 & 费玉清"
     assert join_artist_names("浅影阿 / 汐音社") == "浅影阿,汐音社"
     assert join_artist_names("侯明昊;陈都灵") == "侯明昊,陈都灵"
     assert join_artist_names(None) == ""
