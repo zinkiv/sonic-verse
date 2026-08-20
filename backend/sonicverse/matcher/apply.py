@@ -594,7 +594,7 @@ async def apply_match_to_track(
     if not source.is_file():
         raise ApplyError(
             f"音频文件不存在，无法保存：{track.file_path}。"
-            "请确认中转目录里还有该文件；若已改名或删除，请重新上传/扫描后再试。",
+            "请确认源文件还在原路径；若已改名或删除，请重新扫描后再试。",
             status_code=400,
         )
 

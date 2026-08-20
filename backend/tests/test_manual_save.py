@@ -325,3 +325,42 @@ async def test_manual_save_clears_cover(
         album = await s.get(Album, row.album_id)
         assert album is not None
         assert album.cover_path is None
+
+
+async def test_manual_save_library_file_stays_in_music(
+    client, session, library, music_root: Path, transfer_root: Path
+):
+    track = library["tracks"][0]
+    source = music_root / "library-keep.flac"
+    source.write_bytes(b"fLaC")
+    track.file_path = str(source)
+    await session.commit()
+
+    with (
+        patch("sonicverse.matcher.apply.Tagger.write_metadata", return_value=True),
+        patch(
+            "sonicverse.matcher.apply.MetadataReader.read",
+            return_value=_Meta("原地标题"),
+        ),
+    ):
+        response = await client.post(
+            f"/api/v1/tracks/{track.id}/manual-save",
+            data={
+                "title": "原地标题",
+                "artist": "原地歌手",
+                "album": "原地专辑",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    destination = music_root / "原地歌手-原地标题.flac"
+    assert destination.exists()
+    assert not source.exists()
+    assert destination.parent.resolve() == music_root.resolve()
+    assert not (transfer_root / destination.name).exists()
+
+    async with async_session_maker() as s:
+        row = await s.get(Track, track.id)
+        assert row is not None
+        assert row.file_path == str(destination)
+        assert row.title == "原地标题"

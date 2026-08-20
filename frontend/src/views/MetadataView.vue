@@ -112,6 +112,7 @@ const uploadBusy = ref(false)
 const uploadInput = ref<HTMLInputElement | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 let matchPollTimer: ReturnType<typeof setTimeout> | undefined
+let candidatesEpoch = 0
 
 const selectedTrack = computed(
   () => queue.value.find((track) => track.id === selectedId.value) ?? null
@@ -271,9 +272,13 @@ async function pollJob(jobId: string) {
     if (job.status === 'completed') {
       statusMessage.value = t('metadata.scanCompleted', { processed: job.tracks_processed })
       await libraryStore.fetchStats()
+      const keepId = selectedId.value
       activeIssue.value = 'transfer'
       queuePage.value = 1
-      await loadQueue(selectedId.value)
+      await loadQueue(keepId)
+      if (keepId) {
+        await ensureTrackInQueue(keepId)
+      }
     } else if (job.status === 'failed') {
       error.value = t('metadata.scanFailed', {
         error: job.error_msg || t('errors.loadFailed'),
@@ -304,11 +309,13 @@ async function pollMatchJob(jobId: string) {
         failed: job.failed,
       })
       await libraryStore.fetchStats()
+      const keepId = selectedId.value
       activeIssue.value = 'transfer'
       queuePage.value = 1
-      await loadQueue(selectedId.value)
-      if (selectedId.value) {
-        await loadStoredCandidates(selectedId.value)
+      await loadQueue(keepId)
+      if (keepId) {
+        await ensureTrackInQueue(keepId)
+        await loadStoredCandidates(keepId)
       }
     } else if (job.status === 'failed') {
       error.value = t('metadata.batchMatchFailed', {
@@ -421,21 +428,59 @@ async function syncTransferFromDisk(): Promise<boolean> {
   }
 }
 
+function isTransferTrack(track: Track | null | undefined): boolean {
+  if (!track?.file_path) return false
+  const path = track.file_path.replace(/\\/g, '/')
+  const root = (transferPath.value || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  if (root) {
+    return path === root || path.startsWith(`${root}/`)
+  }
+  return (
+    path === '/transfer' ||
+    path.startsWith('/transfer/') ||
+    path.includes('/data/transfer/')
+  )
+}
+
+async function ensureTrackInQueue(trackId: string): Promise<boolean> {
+  if (queue.value.some((item) => item.id === trackId)) {
+    selectedId.value = trackId
+    return true
+  }
+  try {
+    const track = await api.get<Track>(`/tracks/${trackId}`)
+    queue.value = [track, ...queue.value.filter((item) => item.id !== trackId)]
+    selectedId.value = track.id
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function refreshTrackInQueue(trackId: string) {
+  try {
+    const track = await api.get<Track>(`/tracks/${trackId}`)
+    const exists = queue.value.some((item) => item.id === trackId)
+    queue.value = exists
+      ? queue.value.map((item) => (item.id === trackId ? track : item))
+      : [track, ...queue.value]
+    selectedId.value = track.id
+  } catch {
+    await loadQueue(null)
+  }
+}
+
 async function bootstrapMetadataPage(preferId?: string | null) {
   await libraryStore.fetchStats()
   const scanStarted = await syncTransferFromDisk()
-  if (scanStarted) return
+  if (scanStarted && !preferId) return
 
-  await loadQueue(preferId ?? null)
+  if (!scanStarted) {
+    await loadQueue(preferId ?? null)
+  }
 
-  if (preferId && selectedId.value !== preferId) {
-    try {
-      const track = await api.get<Track>(`/tracks/${preferId}`)
-      queue.value = [track, ...queue.value.filter((item) => item.id !== preferId)]
-      selectedId.value = track.id
-    } catch {
-      // Keep the queue selection if the deep-link track is gone.
-    }
+  if (preferId) {
+    await ensureTrackInQueue(preferId)
   }
 
   if (selectedId.value) {
@@ -521,10 +566,13 @@ async function confirmDeleteTrack() {
 }
 
 async function loadStoredCandidates(trackId: string) {
+  const epoch = ++candidatesEpoch
   try {
     const data = await api.get<MatchCandidatesResponse>(`/tracks/${trackId}/candidates`)
+    if (epoch !== candidatesEpoch || selectedId.value !== trackId || matching.value) return
     candidates.value = data.candidates
   } catch {
+    if (epoch !== candidatesEpoch || selectedId.value !== trackId || matching.value) return
     candidates.value = []
   }
 }
@@ -535,19 +583,24 @@ async function runMatch(trackId: string) {
   statusMessage.value = null
   candidates.value = []
   closeEditor()
+  const epoch = ++candidatesEpoch
 
   try {
     const data = await api.post<MatchCandidatesResponse>(`/tracks/${trackId}/match`, {
       provider: provider.value,
     })
+    if (epoch !== candidatesEpoch || selectedId.value !== trackId) return
     candidates.value = data.candidates
     if (data.candidates.length === 0) {
       statusMessage.value = t('metadata.noCandidatesHint')
     }
   } catch (err) {
+    if (epoch !== candidatesEpoch || selectedId.value !== trackId) return
     error.value = err instanceof Error ? err.message : t('metadata.matchFailed')
   } finally {
-    matching.value = false
+    if (epoch === candidatesEpoch) {
+      matching.value = false
+    }
   }
 }
 
@@ -843,10 +896,19 @@ async function saveEditedMetadata() {
     }
 
     await api.upload<Track>(`/tracks/${track.id}/manual-save`, formData)
+    const savedId = track.id
+    const importedFromTransfer = isTransferTrack(track)
     closeEditor()
-    statusMessage.value = t('metadata.saveSuccess')
+    statusMessage.value = importedFromTransfer
+      ? t('metadata.saveImported')
+      : t('metadata.saveSuccess')
     await libraryStore.fetchStats()
-    await loadQueue(null)
+    if (importedFromTransfer) {
+      await loadQueue(null)
+    } else {
+      await refreshTrackInQueue(savedId)
+      await loadStoredCandidates(savedId)
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('metadata.saveFailed')
   } finally {
@@ -929,6 +991,10 @@ onMounted(async () => {
   suppressIssueReload = false
 
   await bootstrapMetadataPage(queryTrackId)
+
+  if (autoMatch && queryTrackId && selectedId.value === queryTrackId) {
+    await runMatch(queryTrackId)
+  }
 
   if (queryTrackId || queryIssue || autoMatch) {
     const nextQuery = { ...route.query }

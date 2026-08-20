@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useLibraryStore, type SubTab } from '@/stores/library'
-import { api, type Album, type Artist, type ArtistImageCandidate, type MatchCandidatesResponse, type Track } from '@/api'
+import { type Album, type Artist, type ArtistImageCandidate, type Track } from '@/api'
 import { coverSrc } from '@/utils/cover'
 import { formatArtistName, trackArtistLabel } from '@/utils/artists'
 
@@ -45,8 +45,6 @@ const deleting = ref(false)
 const deleteError = ref<string | null>(null)
 const matchingArtistId = ref<string | null>(null)
 const artistMatchError = ref<string | null>(null)
-const matchingTrackId = ref<string | null>(null)
-const matchError = ref<string | null>(null)
 
 const pickerArtist = ref<Artist | null>(null)
 const pickerCandidates = ref<ArtistImageCandidate[]>([])
@@ -120,26 +118,11 @@ async function confirmDelete() {
   }
 }
 
-async function goMatch(track: Track) {
-  if (matchingTrackId.value) return
-  matchingTrackId.value = track.id
-  matchError.value = null
-  try {
-    await api.post<MatchCandidatesResponse>(`/tracks/${track.id}/match`, {
-      provider: 'netease',
-      stage_to_transfer: true,
-    })
-    await store.reloadLibrary()
-    await router.push({
-      name: 'metadata',
-      query: { track: track.id, issue: 'transfer' },
-    })
-  } catch (err) {
-    matchError.value =
-      err instanceof Error ? err.message : t('library.matchFailed')
-  } finally {
-    matchingTrackId.value = null
-  }
+function goMatch(track: Track) {
+  void router.push({
+    name: 'metadata',
+    query: { track: track.id, auto: '1' },
+  })
 }
 
 function openAlbumTracks(album: Album) {
@@ -430,7 +413,6 @@ onBeforeUnmount(() => {
 
     <!-- Tracks List -->
     <div v-if="store.currentSubTab === 'tracks'" class="track-list">
-      <p v-if="matchError" class="track-match-error">{{ matchError }}</p>
       <div class="track-header">
         <span>#</span>
         <span>{{ t('library.columnTitle') }}</span>
@@ -466,14 +448,9 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="row-btn"
-            :disabled="matchingTrackId === track.id"
             @click="goMatch(track)"
           >
-            {{
-              matchingTrackId === track.id
-                ? t('library.matchingTrack')
-                : t('library.match')
-            }}
+            {{ t('library.match') }}
           </button>
           <button
             type="button"
@@ -1003,14 +980,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   overflow: hidden;
-}
-
-.track-match-error {
-  margin: 0;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--color-border);
-  font-size: 12px;
-  color: #dc2626;
 }
 
 .row-btn:disabled {

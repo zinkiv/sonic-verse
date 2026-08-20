@@ -13,7 +13,13 @@ class MatchRequest(BaseModel):
     """Request body for searching match candidates."""
 
     provider: ProviderName = "netease"
-    stage_to_transfer: bool = False
+    stage_to_transfer: bool = Field(
+        default=False,
+        description=(
+            "If true, move a /music file into /transfer before searching. "
+            "Library rematch should leave this false and write tags in place."
+        ),
+    )
 
 
 class MatchCandidate(BaseModel):
